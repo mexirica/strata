@@ -1,6 +1,10 @@
 package hasher
 
-import "github.com/zeebo/blake3"
+import (
+	"encoding/hex"
+
+	"github.com/zeebo/blake3"
+)
 
 func NewBlake3Hasher() Hasher {
 	return &blake3Hasher{}
@@ -14,5 +18,5 @@ func (h *blake3Hasher) Hash(data []byte) [32]byte {
 
 func (h *blake3Hasher) ToString(data []byte) string {
 	sum := blake3.Sum256(data)
-	return string(sum[:])
+	return hex.EncodeToString(sum[:])
 }

@@ -14,7 +14,7 @@ type CAS struct {
 
 type CID [32]byte
 
-func getKeykey(cid CID) []byte {
+func getKey(cid CID) []byte {
 	return append([]byte("chunk:"), cid[:]...)
 }
 
@@ -27,7 +27,7 @@ func NewCAS(storage storage.ObjectStorage, hasher hasher.Hasher) *CAS {
 
 func (c *CAS) Put(ctx context.Context, data []byte) (cid CID, err error) {
 	cid = c.hasher.Hash(data)
-	key := getKeykey(cid)
+	key := getKey(cid)
 	exists, err := c.storage.Exists(ctx, key)
 	if err != nil {
 		return CID{}, err
@@ -43,6 +43,6 @@ func (c *CAS) Put(ctx context.Context, data []byte) (cid CID, err error) {
 }
 
 func (c *CAS) Get(ctx context.Context, cid CID) (data []byte, err error) {
-	key := getKeykey(cid)
+	key := getKey(cid)
 	return c.storage.Get(ctx, key)
 }
