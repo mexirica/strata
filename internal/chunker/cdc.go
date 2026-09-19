@@ -8,15 +8,20 @@ import (
 	"io"
 	"sync"
 
-	"github.com/PlakarKorp/go-cdc-chunkers"
+	chunkers "github.com/PlakarKorp/go-cdc-chunkers"
+	_ "github.com/PlakarKorp/go-cdc-chunkers/chunkers/fastcdc"
+	_ "github.com/PlakarKorp/go-cdc-chunkers/chunkers/jc"
+	_ "github.com/PlakarKorp/go-cdc-chunkers/chunkers/ultracdc"
 )
 
 type CdcAlgorithm string
 
 const (
-	FastCDC  CdcAlgorithm = "fastcdc"
-	UltraCDC CdcAlgorithm = "ultracdc"
+	FastCDC  CdcAlgorithm = "fastcdc-v1.0.0"
+	UltraCDC CdcAlgorithm = "ultracdc-v1.0.0"
 	JC       CdcAlgorithm = "jc"
+
+	MaxSupportedChunkSize = 64 * 1024 * 1024
 )
 
 var (
@@ -24,31 +29,52 @@ var (
 	ErrNilCallback    = errors.New("callback is nil")
 	ErrBufferTooSmall = errors.New("buffer size is too small")
 	ErrEmptyChunk     = errors.New("chunker returned empty chunk unexpectedly")
+	ErrInvalidConfig  = errors.New("invalid chunker config")
 )
 
 type Config struct {
-	algorithm  CdcAlgorithm
-	minSize    int
-	normalSize int
-	maxSize    int
+	Algorithm  CdcAlgorithm
+	MinSize    int
+	NormalSize int
+	MaxSize    int
+}
+
+func DefaultConfig() Config {
+	return Config{
+		Algorithm:  FastCDC,
+		MinSize:    256 * 1024,      // 256 KiB
+		NormalSize: 1024 * 1024,     // 1 MiB
+		MaxSize:    4 * 1024 * 1024, // 4 MiB
+	}
 }
 
 func (c Config) validate() error {
-	if c.minSize <= 0 {
-		return errors.New("min size must be greater than zero")
+	if c.MinSize <= 0 {
+		return fmt.Errorf("%w: min size must be greater than zero", ErrInvalidConfig)
 	}
-	if c.normalSize < c.minSize {
-		return errors.New("normal size must be >= min size")
+	if c.NormalSize <= c.MinSize {
+		return fmt.Errorf("%w: normal size must be greater than min size", ErrInvalidConfig)
 	}
-	if c.maxSize < c.normalSize {
-		return errors.New("max size must be >= normal size")
+	if c.MaxSize <= c.NormalSize {
+		return fmt.Errorf("%w: max size must be greater than normal size", ErrInvalidConfig)
+	}
+	if c.MaxSize > MaxSupportedChunkSize {
+		return fmt.Errorf("%w: max size exceeds %d bytes", ErrInvalidConfig, MaxSupportedChunkSize)
 	}
 
-	switch c.algorithm {
-	case FastCDC, UltraCDC, JC:
+	switch c.Algorithm {
+	case FastCDC:
+		if c.MinSize < 64 {
+			return fmt.Errorf("%w: FastCDC min size must be at least 64 bytes", ErrInvalidConfig)
+		}
+		if c.NormalSize&(c.NormalSize-1) != 0 {
+			return fmt.Errorf("%w: FastCDC normal size must be a power of two", ErrInvalidConfig)
+		}
+		return nil
+	case UltraCDC, JC:
 		return nil
 	default:
-		return fmt.Errorf("unsupported algorithm: %q", c.algorithm)
+		return fmt.Errorf("%w: unsupported algorithm %q", ErrInvalidConfig, c.Algorithm)
 	}
 }
 
@@ -74,10 +100,8 @@ func NewCDC(config Config) (*CDC, error) {
 	return cdc, nil
 }
 
-// bufferSize returns the minimum required size of the internal/external buffer.
-// CDC requires extra capacity beyond MaxSize for the sliding search window.
 func (c *CDC) bufferSize() int {
-	return c.config.maxSize * 2
+	return c.config.MaxSize
 }
 
 func (c *CDC) Split(
@@ -88,7 +112,9 @@ func (c *CDC) Split(
 	if err := validateInput(ctx, r, fn); err != nil {
 		return err
 	}
-
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	buf := c.pool.Get().([]byte)
 	defer c.pool.Put(buf)
 
@@ -107,19 +133,19 @@ func (c *CDC) split(
 	}
 
 	opts := &chunkers.ChunkerOpts{
-		MinSize:    c.config.minSize,
-		NormalSize: c.config.normalSize,
-		MaxSize:    c.config.maxSize,
+		MinSize:    c.config.MinSize,
+		NormalSize: c.config.NormalSize,
+		MaxSize:    c.config.MaxSize,
 	}
 
 	chunker, err := chunkers.NewChunkerBuffer(
-		string(c.config.algorithm),
+		string(c.config.Algorithm),
 		r,
 		opts,
 		buf,
 	)
 	if err != nil {
-		return fmt.Errorf("create %s chunker: %w", c.config.algorithm, err)
+		return fmt.Errorf("create %s chunker: %w", c.config.Algorithm, err)
 	}
 
 	for {
@@ -133,6 +159,10 @@ func (c *CDC) split(
 		}
 
 		if chunk != nil && len(chunk) > 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			// chunk is backed by the reusable internal buffer and is valid only until fn returns.
 			if errFn := fn(chunk); errFn != nil {
 				return errFn
 			}
