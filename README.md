@@ -1,4 +1,5 @@
 <div align="center">
+<p align="center"><img src="assets/strata.png" alt="Strata logo" width="120" /></p>
 
 # Strata
 
