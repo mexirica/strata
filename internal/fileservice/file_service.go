@@ -10,6 +10,7 @@ import (
 
 	"github.com/mexirica/strata/internal/cas"
 	"github.com/mexirica/strata/internal/chunker"
+	"github.com/mexirica/strata/internal/cid"
 	"github.com/mexirica/strata/internal/manifeststore"
 )
 
@@ -54,23 +55,23 @@ func (s *FileService) Store(
 	ctx context.Context,
 	name string,
 	r io.Reader,
-) (cas.CID, error) {
+) (cid.CID, error) {
 	if ctx == nil {
-		return cas.CID{}, errors.New("context is nil")
+		return cid.CID{}, errors.New("context is nil")
 	}
 	if r == nil {
-		return cas.CID{}, ErrNilReader
+		return cid.CID{}, ErrNilReader
 	}
 	if len(name) == 0 || len(name) > s.config.MaxNameBytes || !utf8.ValidString(name) {
-		return cas.CID{}, ErrInvalidName
+		return cid.CID{}, ErrInvalidName
 	}
 
 	var (
-		cids []cas.CID
+		cids []cid.CID
 		size int64
 	)
 	if err := ctx.Err(); err != nil {
-		return cas.CID{}, err
+		return cid.CID{}, err
 	}
 	err := s.chunker.Split(ctx, r, func(chunk []byte) error {
 		if len(cids) == s.config.MaxChunks {
@@ -90,7 +91,7 @@ func (s *FileService) Store(
 		return nil
 	})
 	if err != nil {
-		return cas.CID{}, err
+		return cid.CID{}, err
 	}
 
 	manifestCID, err := s.manifestStore.Put(ctx, manifeststore.FileManifest{
@@ -100,14 +101,14 @@ func (s *FileService) Store(
 		Chunks:  cids,
 	})
 	if err != nil {
-		return cas.CID{}, err
+		return cid.CID{}, err
 	}
 	return manifestCID, nil
 }
 
 func (s *FileService) Retrieve(
 	ctx context.Context,
-	manifestCID cas.CID,
+	manifestCID cid.CID,
 ) (io.ReadCloser, *manifeststore.FileManifest, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("context is nil")
@@ -155,6 +156,16 @@ func (s *FileService) Retrieve(
 	}()
 
 	return &retrievalReader{PipeReader: pr, cancel: cancel}, &manifest, nil
+}
+
+func (s *FileService) Delete(ctx context.Context, manifestCID cid.CID) error {
+	if ctx == nil {
+		return errors.New("context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.manifestStore.Delete(ctx, manifestCID)
 }
 
 type retrievalReader struct {

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mexirica/strata/internal/cas"
+	"github.com/mexirica/strata/internal/cid"
 	"github.com/mexirica/strata/internal/hasher"
 	"github.com/mexirica/strata/internal/manifeststore"
 	"github.com/mexirica/strata/internal/storage"
@@ -38,11 +38,11 @@ func TestManifestStore_CRUD(t *testing.T) {
 	d1[0] = 1
 	var d2 [32]byte
 	d2[0] = 2
-	cid1, err := cas.NewCID(cas.AlgBlake3, d1)
+	cid1, err := cid.NewCID(cid.AlgBlake3, d1)
 	if err != nil {
 		t.Fatalf("NewCID failed: %v", err)
 	}
-	cid2, err := cas.NewCID(cas.AlgBlake3, d2)
+	cid2, err := cid.NewCID(cid.AlgBlake3, d2)
 	if err != nil {
 		t.Fatalf("NewCID failed: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestManifestStore_CRUD(t *testing.T) {
 		Version: manifeststore.CurrentVersion,
 		Name:    "test.pdf",
 		Size:    1024,
-		Chunks:  []cas.CID{cid1, cid2},
+		Chunks:  []cid.CID{cid1, cid2},
 	}
 
 	manifestCID, err := store.Put(ctx, manifest)

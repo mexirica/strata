@@ -1,3 +1,4 @@
+// Package storage defines and implements persistent object storage.
 package storage
 
 import (
@@ -13,12 +14,12 @@ var (
 
 type ObjectStorage interface {
 	Put(ctx context.Context, key, value []byte) error
-	// PutIfNotExists consumes value before returning and verifies that an existing key has identical content.
 	PutIfNotExists(ctx context.Context, key, value []byte) (inserted bool, err error)
 	Get(ctx context.Context, key []byte) ([]byte, error)
 	Exists(ctx context.Context, key []byte) (bool, error)
 	Delete(ctx context.Context, key []byte) error
 	ListPage(ctx context.Context, prefix, after []byte, limit int) ([]Object, []byte, error)
+	ListKeysPage(ctx context.Context, prefix, after []byte, limit int) ([][]byte, []byte, error)
 	Close() error
 }
 

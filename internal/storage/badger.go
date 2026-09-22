@@ -166,6 +166,42 @@ func (b *Badger) ListPage(ctx context.Context, prefix, after []byte, limit int) 
 	return objects, next, translateError(err)
 }
 
+func (b *Badger) ListKeysPage(ctx context.Context, prefix, after []byte, limit int) ([][]byte, []byte, error) {
+	if limit <= 0 {
+		return nil, nil, errors.New("list limit must be greater than zero")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	var keys [][]byte
+	var next []byte
+	err := b.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		seek := prefix
+		if len(after) > 0 {
+			seek = after
+		}
+		for it.Seek(seek); it.ValidForPrefix(prefix); it.Next() {
+			key := it.Item().Key()
+			if len(after) > 0 && bytes.Equal(key, after) {
+				continue
+			}
+			if len(keys) == limit {
+				next = append([]byte(nil), keys[len(keys)-1]...)
+				break
+			}
+			keys = append(keys, append([]byte(nil), key...))
+		}
+		return nil
+	})
+	return keys, next, translateError(err)
+}
+
 func (b *Badger) Close() error {
 	return translateError(b.db.Close())
 }

@@ -9,7 +9,7 @@ import (
 	"math"
 	"unicode/utf8"
 
-	"github.com/mexirica/strata/internal/cas"
+	"github.com/mexirica/strata/internal/cid"
 	"github.com/mexirica/strata/internal/hasher"
 	"github.com/mexirica/strata/internal/storage"
 )
@@ -45,11 +45,11 @@ type FileManifest struct {
 	Version uint16
 	Name    string
 	Size    int64
-	Chunks  []cas.CID
+	Chunks  []cid.CID
 }
 
 type StoredManifest struct {
-	CID      cas.CID
+	CID      cid.CID
 	Manifest FileManifest
 }
 
@@ -66,26 +66,26 @@ func NewManifestStore(store storage.ObjectStorage, defaultHasher hasher.Hasher, 
 	return &ManifestStore{storage: store, hasher: defaultHasher, config: config}, nil
 }
 
-func getKey(valueCID cas.CID) []byte {
+func getKey(valueCID cid.CID) []byte {
 	return append(append([]byte(nil), manifestPrefix...), valueCID.Bytes()...)
 }
 
-func (s *ManifestStore) Put(ctx context.Context, manifest FileManifest) (cas.CID, error) {
+func (s *ManifestStore) Put(ctx context.Context, manifest FileManifest) (cid.CID, error) {
 	data, err := s.encode(manifest)
 	if err != nil {
-		return cas.CID{}, err
+		return cid.CID{}, err
 	}
 	valueCID := s.hasher.Hash(data)
 	if _, err := s.storage.PutIfNotExists(ctx, getKey(valueCID), data); err != nil {
 		if errors.Is(err, storage.ErrContentMismatch) {
-			return cas.CID{}, fmt.Errorf("%w: %w", ErrCorruptedManifest, err)
+			return cid.CID{}, fmt.Errorf("%w: %w", ErrCorruptedManifest, err)
 		}
-		return cas.CID{}, err
+		return cid.CID{}, err
 	}
 	return valueCID, nil
 }
 
-func (s *ManifestStore) Get(ctx context.Context, valueCID cas.CID) (FileManifest, error) {
+func (s *ManifestStore) Get(ctx context.Context, valueCID cid.CID) (FileManifest, error) {
 	if !valueCID.IsValid() {
 		return FileManifest{}, fmt.Errorf("%w: invalid CID", ErrInvalidManifest)
 	}
@@ -96,14 +96,14 @@ func (s *ManifestStore) Get(ctx context.Context, valueCID cas.CID) (FileManifest
 	return s.decodeVerified(valueCID, data)
 }
 
-func (s *ManifestStore) Delete(ctx context.Context, valueCID cas.CID) error {
+func (s *ManifestStore) Delete(ctx context.Context, valueCID cid.CID) error {
 	if !valueCID.IsValid() {
 		return fmt.Errorf("%w: invalid CID", ErrInvalidManifest)
 	}
 	return s.storage.Delete(ctx, getKey(valueCID))
 }
 
-func (s *ManifestStore) ListManifests(ctx context.Context, after *cas.CID, limit int) ([]StoredManifest, *cas.CID, error) {
+func (s *ManifestStore) ListManifests(ctx context.Context, after *cid.CID, limit int) ([]StoredManifest, *cid.CID, error) {
 	if limit <= 0 || limit > s.config.MaxPageSize {
 		return nil, nil, fmt.Errorf("%w: page size must be between 1 and %d", ErrInvalidManifest, s.config.MaxPageSize)
 	}
@@ -140,7 +140,40 @@ func (s *ManifestStore) ListManifests(ctx context.Context, after *cas.CID, limit
 	return manifests, &next, nil
 }
 
-func (s *ManifestStore) decodeVerified(valueCID cas.CID, data []byte) (FileManifest, error) {
+func (s *ManifestStore) ListManifestCIDs(ctx context.Context, after *cid.CID, limit int) ([]cid.CID, *cid.CID, error) {
+	if limit <= 0 || limit > s.config.MaxPageSize {
+		return nil, nil, fmt.Errorf("%w: page size must be between 1 and %d", ErrInvalidManifest, s.config.MaxPageSize)
+	}
+	var afterKey []byte
+	if after != nil {
+		if !after.IsValid() {
+			return nil, nil, fmt.Errorf("%w: invalid cursor CID", ErrInvalidManifest)
+		}
+		afterKey = getKey(*after)
+	}
+	keys, nextKey, err := s.storage.ListKeysPage(ctx, manifestPrefix, afterKey, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	manifestCIDs := make([]cid.CID, 0, len(keys))
+	for _, key := range keys {
+		manifestCID, err := cidFromKey(key)
+		if err != nil {
+			return nil, nil, err
+		}
+		manifestCIDs = append(manifestCIDs, manifestCID)
+	}
+	if len(nextKey) == 0 {
+		return manifestCIDs, nil, nil
+	}
+	next, err := cidFromKey(nextKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	return manifestCIDs, &next, nil
+}
+
+func (s *ManifestStore) decodeVerified(valueCID cid.CID, data []byte) (FileManifest, error) {
 	verifier, err := hasher.ForAlgorithm(valueCID.Algorithm())
 	if err != nil {
 		return FileManifest{}, fmt.Errorf("%w: %w", ErrInvalidManifest, err)
@@ -218,9 +251,9 @@ func (s *ManifestStore) decode(data []byte) (FileManifest, error) {
 	if expected != uint64(len(data)) {
 		return FileManifest{}, fmt.Errorf("%w: encoded length mismatch", ErrInvalidManifest)
 	}
-	chunks := make([]cas.CID, int(chunkCount))
+	chunks := make([]cid.CID, int(chunkCount))
 	for index := range chunks {
-		chunkCID, err := cas.ParseCIDBytes(data[offset : offset+34])
+		chunkCID, err := cid.ParseCIDBytes(data[offset : offset+34])
 		if err != nil {
 			return FileManifest{}, fmt.Errorf("%w: chunk %d: %w", ErrInvalidManifest, index, err)
 		}
@@ -258,13 +291,13 @@ func (s *ManifestStore) validate(manifest FileManifest) error {
 	return nil
 }
 
-func cidFromKey(key []byte) (cas.CID, error) {
+func cidFromKey(key []byte) (cid.CID, error) {
 	if len(key) != len(manifestPrefix)+34 || string(key[:len(manifestPrefix)]) != string(manifestPrefix) {
-		return cas.CID{}, fmt.Errorf("%w: invalid storage key", ErrCorruptedManifest)
+		return cid.CID{}, fmt.Errorf("%w: invalid storage key", ErrCorruptedManifest)
 	}
-	valueCID, err := cas.ParseCIDBytes(key[len(manifestPrefix):])
+	valueCID, err := cid.ParseCIDBytes(key[len(manifestPrefix):])
 	if err != nil {
-		return cas.CID{}, fmt.Errorf("%w: %w", ErrCorruptedManifest, err)
+		return cid.CID{}, fmt.Errorf("%w: %w", ErrCorruptedManifest, err)
 	}
 	return valueCID, nil
 }

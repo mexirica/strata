@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mexirica/strata/internal/cas"
+	"github.com/mexirica/strata/internal/cid"
 	"github.com/mexirica/strata/internal/hasher"
 	"github.com/mexirica/strata/internal/storage"
 )
@@ -23,7 +24,6 @@ func setupCAS(t *testing.T) (*cas.CAS, storage.ObjectStorage) {
 	h := hasher.NewBlake3Hasher()
 	c, err := cas.NewCAS(db, h, cas.Config{
 		MaxObjectSize: 4 * 1024 * 1024,
-		TempDir:       t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("failed to init CAS: %v", err)
@@ -36,16 +36,16 @@ func TestCAS_PutAndGet(t *testing.T) {
 	ctx := context.Background()
 
 	payload := []byte("content addressable storage in Go")
-	cid, err := c.Put(ctx, payload)
+	chunkCID, err := c.Put(ctx, payload)
 	if err != nil {
 		t.Fatalf("Put failed: %v", err)
 	}
 
-	if cid.Algorithm() != cas.AlgBlake3 {
-		t.Errorf("expected algorithm %v, got %v", cas.AlgBlake3, cid.Algorithm())
+	if chunkCID.Algorithm() != cid.AlgBlake3 {
+		t.Errorf("expected algorithm %v, got %v", cid.AlgBlake3, chunkCID.Algorithm())
 	}
 
-	got, err := c.Get(ctx, cid)
+	got, err := c.Get(ctx, chunkCID)
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestCAS_GetUsesCIDAlgorithm(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	config := cas.Config{MaxObjectSize: 1024, TempDir: t.TempDir()}
+	config := cas.Config{MaxObjectSize: 1024}
 	shaCAS, err := cas.NewCAS(db, hasher.NewSha256Hasher(), config)
 	if err != nil {
 		t.Fatalf("failed to init SHA-256 CAS: %v", err)
@@ -73,11 +73,11 @@ func TestCAS_GetUsesCIDAlgorithm(t *testing.T) {
 	}
 
 	payload := []byte("cross-algorithm content")
-	valueCID, err := shaCAS.Put(context.Background(), payload)
+	shaCID, err := shaCAS.Put(context.Background(), payload)
 	if err != nil {
 		t.Fatalf("SHA-256 Put failed: %v", err)
 	}
-	got, err := blakeCAS.Get(context.Background(), valueCID)
+	got, err := blakeCAS.Get(context.Background(), shaCID)
 	if err != nil {
 		t.Fatalf("cross-algorithm Get failed: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestCAS_Put_ConcurrentRace(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 
-	cids := make([]cas.CID, goroutines)
+	cids := make([]cid.CID, goroutines)
 	errorsList := make([]error, goroutines)
 
 	for i := 0; i < goroutines; i++ {
