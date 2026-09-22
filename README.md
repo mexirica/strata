@@ -8,6 +8,8 @@ Split files into stable chunks, deduplicate their contents, and retrieve them
 later from a single manifest CID.
 
 [![CI](https://github.com/mexirica/strata/actions/workflows/ci.yml/badge.svg)](https://github.com/mexirica/strata/actions/workflows/ci.yml)
+[![Release](https://github.com/mexirica/strata/actions/workflows/release.yml/badge.svg)](https://github.com/mexirica/strata/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/mexirica/strata?sort=semver)](https://github.com/mexirica/strata/releases/latest)
 [![Go version](https://img.shields.io/github/go-mod/go-version/mexirica/strata)](go.mod)
 [![Go Report Card](https://goreportcard.com/badge/github.com/mexirica/strata)](https://goreportcard.com/report/github.com/mexirica/strata)
 
@@ -52,6 +54,23 @@ The CID printed by `strata add` identifies that manifest and is the handle used
 by `get` and `remove`.
 
 ## Installation
+
+### APT (Debian/Ubuntu)
+
+```bash
+curl -fsSL https://mexirica.github.io/strata/cli/public-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/strata-cli-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/strata-cli-archive-keyring.gpg] https://mexirica.github.io/strata/cli stable main" | sudo tee /etc/apt/sources.list.d/strata-cli.list
+sudo apt update && sudo apt install strata
+```
+
+The `/cli` repository path is intentionally separate so future Strata
+executables can have independent package repositories.
+
+### Go
+
+```bash
+go install github.com/mexirica/strata/cmd/cli@latest
+```
 
 ### Build From Source
 

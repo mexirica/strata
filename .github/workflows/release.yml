@@ -1,0 +1,79 @@
+name: Release & APT Repo
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install APT utilities
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev apt-utils
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Prepare CLI APT repository
+        run: |
+          mkdir -p repo/cli/dists/stable/main/binary-amd64
+          mkdir -p repo/cli/dists/stable/main/binary-arm64
+          mkdir -p repo/cli/pool/main
+          cp dist/*.deb repo/cli/pool/main/
+
+          cd repo/cli
+          dpkg-scanpackages --arch amd64 pool/main > dists/stable/main/binary-amd64/Packages
+          gzip -9k dists/stable/main/binary-amd64/Packages
+          dpkg-scanpackages --arch arm64 pool/main > dists/stable/main/binary-arm64/Packages
+          gzip -9k dists/stable/main/binary-arm64/Packages
+
+          cd dists/stable
+          echo "Origin: mexirica" > Release
+          echo "Label: strata-cli" >> Release
+          echo "Suite: stable" >> Release
+          echo "Codename: stable" >> Release
+          echo "Architectures: amd64 arm64" >> Release
+          echo "Components: main" >> Release
+          apt-ftparchive release . >> Release
+
+      - name: Import GPG key
+        id: import_gpg
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Sign CLI APT repository
+        run: |
+          gpg --batch --yes --clearsign -o repo/cli/dists/stable/InRelease repo/cli/dists/stable/Release
+          gpg --batch --yes --armor --detach-sign -o repo/cli/dists/stable/Release.gpg repo/cli/dists/stable/Release
+          gpg --armor --export ${{ steps.import_gpg.outputs.keyid }} > repo/cli/public-key.gpg
+
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: repo
+          branch: gh-pages
+          token: ${{ secrets.GH_PAT }}

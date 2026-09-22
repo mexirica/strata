@@ -1,0 +1,45 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: strata-cli
+    main: ./cmd/cli
+    binary: strata
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+nfpms:
+  - id: strata-cli-nfpm
+    package_name: strata
+    vendor: mexirica
+    homepage: https://github.com/mexirica/strata
+    maintainer: mexirica <mexirica@users.noreply.github.com>
+    description: Local content-addressed file storage.
+    formats:
+      - deb
+    bindir: /usr/bin
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  github:
+    owner: mexirica
+    name: strata

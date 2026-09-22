@@ -2,3 +2,6 @@
 .strata
 .strata.yaml
 next_steps.md
+/bin/
+/dist/
+/repo/
