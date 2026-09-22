@@ -168,6 +168,16 @@ func (s *FileService) Delete(ctx context.Context, manifestCID cid.CID) error {
 	return s.manifestStore.Delete(ctx, manifestCID)
 }
 
+func (s *FileService) List(ctx context.Context, after *cid.CID, limit int) ([]manifeststore.StoredManifest, *cid.CID, error) {
+	if ctx == nil {
+		return nil, nil, errors.New("context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	return s.manifestStore.ListManifests(ctx, after, limit)
+}
+
 type retrievalReader struct {
 	*io.PipeReader
 	cancel context.CancelFunc

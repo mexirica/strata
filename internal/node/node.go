@@ -162,6 +162,12 @@ func (n *Node) Delete(ctx context.Context, manifestCID cid.CID) error {
 	return n.files.Delete(ctx, manifestCID)
 }
 
+func (n *Node) List(ctx context.Context, after *cid.CID, limit int) ([]manifeststore.StoredManifest, *cid.CID, error) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.files.List(ctx, after, limit)
+}
+
 func (n *Node) RunGC(ctx context.Context, dryRun bool) (maintenance.GCReport, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
