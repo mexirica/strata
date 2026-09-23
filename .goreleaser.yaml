@@ -28,6 +28,7 @@ nfpms:
     homepage: https://github.com/mexirica/strata
     maintainer: mexirica <mexirica@users.noreply.github.com>
     description: Local content-addressed file storage.
+    license: MIT
     formats:
       - deb
     bindir: /usr/bin

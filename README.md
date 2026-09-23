@@ -276,3 +276,7 @@ Development is proceeding in stages:
 	BadgerDB and content-addressed chunks in blob storage.
 4. Add a daemon and transport-neutral API before building a TUI or distributed
 	replication.
+
+## License
+
+Strata is available under the [MIT License](LICENSE).
