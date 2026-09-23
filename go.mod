@@ -5,7 +5,7 @@ go 1.27.1
 require (
 	github.com/PlakarKorp/go-cdc-chunkers v1.1.0
 	github.com/dgraph-io/badger/v4 v4.9.6
-	github.com/dustin/go-humanize v1.0.1
+	github.com/dustin/go-humanize v1.1.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/zeebo/blake3 v0.2.4
