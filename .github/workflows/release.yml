@@ -34,7 +34,7 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Prepare CLI APT repository
         run: |
@@ -76,4 +76,4 @@ jobs:
         with:
           folder: repo
           branch: gh-pages
-          token: ${{ secrets.GH_PAT }}
+          token: ${{ github.token }}
