@@ -1,0 +1,31 @@
+Origin: mexirica
+Label: strata-cli
+Suite: stable
+Codename: stable
+Architectures: amd64 arm64
+Components: main
+Date: Thu, 24 Sep 2026 18:42:29 +0000
+MD5Sum:
+ b95a8396fd61bba5e6a54db846c58a91              148 Release
+ 5e0203eacb74d951f638fff5d394ce0d              470 main/binary-amd64/Packages
+ e4ce0f32062344f39fb85760ff26efd1              363 main/binary-amd64/Packages.gz
+ 893f5a687a400fbaaa3dfe404a224fc2              470 main/binary-arm64/Packages
+ 4036779410c4b93af38950edd5401bba              359 main/binary-arm64/Packages.gz
+SHA1:
+ 2d01d8ff6104d00b92a4912a64fbe217b900c2ab              148 Release
+ 3c894e0b622655bb29f721cde54de07ba87c0af8              470 main/binary-amd64/Packages
+ 7e76038d10f02c8f53b5e57ef40880edf4c71043              363 main/binary-amd64/Packages.gz
+ f4f7a4ec180ea5dc1eea923c7db73fc68e4c7b08              470 main/binary-arm64/Packages
+ 1f92160763eb7b7621e3f243d419d08c9078b14a              359 main/binary-arm64/Packages.gz
+SHA256:
+ 071345de253d35b8ba55c90bf1eac57b011776ef4c36c12cf59c8aceaf00312d              148 Release
+ ece8a65f749b6b5064e1f7b38dbbed9e3665e1bec4af4261b8363d0e13f4aa7f              470 main/binary-amd64/Packages
+ dafa951fa966f6b2e9994a0d056b3e0d8795e6a923dad60fee4cd6624ac1c262              363 main/binary-amd64/Packages.gz
+ 606321165a8a44ad6dbbd7fbb681de9210e2b83474afc259594ee39c5c9c300f              470 main/binary-arm64/Packages
+ 20528864fa7eaff01c33c71eaee91e3a9f105293bad86a85b50b40d52efe0e99              359 main/binary-arm64/Packages.gz
+SHA512:
+ 8aa675373ac37cfb006de868d2cc6c9064f58c83793e7c3b26c52cf33bfae53449a1d6e7c36c069fdc2a8fea0abe2a04ca6f2b302a60f77853c9da1d1df5ce70              148 Release
+ 81d75b3fd0b6a8b6fd40603cfd0f5251ab7ab8f10771d1ad59938f7ac83187530455a083d3604342fbc867728b3e9eab81fe6c8c5b43f503c5568653bf0bf126              470 main/binary-amd64/Packages
+ 7d78b0595111d5eeb4350d3fe1084d3a433c61c80ccaec70346f1023db42a7e5d993a2f050a2e8aa98b9339d88b27d74d9be3a20cf36a5ca9a0c79376a521d87              363 main/binary-amd64/Packages.gz
+ 905684ec19cdd31d8b139439fa9fe739cc475bfb0ece0e2c221d3191b710e2e6c9675bdcd33526a57d6db986e43728fc1094e2ec4191c65e5b2d1d1f7568667e              470 main/binary-arm64/Packages
+ 59fbaa1cb497e5a86a3c8b263cdae7ffb0e77ec1f8a8b91e338f2863d97c2bb31bebc8931c9ad071c0b016c8b9d4cf7c081ae097ea75d9a76b8508957f03aa10              359 main/binary-arm64/Packages.gz

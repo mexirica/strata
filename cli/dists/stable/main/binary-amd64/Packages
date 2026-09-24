@@ -1,0 +1,14 @@
+Package: strata
+Version: 0.1.0
+Architecture: amd64
+Maintainer: mexirica <mexirica@users.noreply.github.com>
+Installed-Size: 12832
+Filename: pool/main/strata_0.1.0_linux_amd64.deb
+Size: 5224036
+MD5sum: 907e83b1243f251c96923d4bd073aa28
+SHA1: 1556529f59686e0dfef8be100a18c777c261a80a
+SHA256: 97aa09cedb77efeffa3f43086cd8b9ef35a0f80a0c5b49c89bc93ff3e883ef99
+Priority: optional
+Homepage: https://github.com/mexirica/strata
+Description: Local content-addressed file storage.
+
