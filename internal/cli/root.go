@@ -60,8 +60,16 @@ func (a *application) initCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
-				return fmt.Errorf("create data directory: %w", err)
+			nodeConfig, err := cfg.nodeConfig()
+			if err != nil {
+				return err
+			}
+			n, err := node.New(cmd.Context(), nodeConfig)
+			if err != nil {
+				return fmt.Errorf("initialize repository: %w", err)
+			}
+			if err := n.Close(); err != nil {
+				return fmt.Errorf("close repository: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "initialized repository in %s\n", cfg.DataDir)
 			return nil
@@ -246,6 +254,9 @@ func formatScrubIssue(issue maintenance.ScrubIssue) string {
 }
 
 func (a *application) withNode(ctx context.Context, operation func(*node.Node) error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	cfg, err := loadConfig(a.configPath)
 	if err != nil {
 		return err
@@ -254,7 +265,7 @@ func (a *application) withNode(ctx context.Context, operation func(*node.Node) e
 	if err != nil {
 		return err
 	}
-	n, err := node.New(nodeConfig)
+	n, err := node.New(ctx, nodeConfig)
 	if err != nil {
 		return fmt.Errorf("open repository: %w", err)
 	}

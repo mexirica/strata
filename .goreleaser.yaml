@@ -21,6 +21,13 @@ archives:
   - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
+builds:
+  - id: strata-cli
+    main: ./cmd/cli
+    binary: strata
+    ldflags:
+      - -s -w -X github.com/mexirica/strata/internal/buildinfo.Version={{ .Tag }}
+      
 nfpms:
   - id: strata-cli-nfpm
     package_name: strata

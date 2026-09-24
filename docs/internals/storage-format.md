@@ -51,12 +51,61 @@ Manifest validation requires version 1, a nonempty valid UTF-8 name within the
 configured byte limit, a nonnegative size, valid chunk CIDs, and at least one
 chunk for a nonempty file. Empty files have no chunks.
 
+## Repository Metadata
+
+Each initialized repository contains one immutable JSON document at the
+reserved ASCII key `repository:metadata`. Version 1 has the following canonical
+field order and shape:
+
+```json
+{
+	"format_version": 1,
+	"created_at": "2026-09-24T12:00:00Z",
+	"app_version": "v0.1.0",
+	"chunking": {
+		"algorithm": "fastcdc-v1.0.0",
+		"min_size": 262144,
+		"normal_size": 1048576,
+		"max_size": 4194304
+	},
+	"manifest_format_version": 1
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `format_version` | Version of the repository metadata schema, currently `1` |
+| `created_at` | Repository creation time in UTC |
+| `app_version` | Strata build version that initialized the repository |
+| `chunking.algorithm` | Content-defined chunking algorithm used for writes |
+| `chunking.min_size` | Minimum chunk size in bytes |
+| `chunking.normal_size` | Target chunk size in bytes |
+| `chunking.max_size` | Maximum chunk size in bytes |
+| `manifest_format_version` | Manifest encoding version required by the repository |
+
+Encoding uses Go's `encoding/json` representation of this fixed structure.
+Therefore, the same metadata value produces the same bytes. Creation timestamps
+are normalized to UTC before encoding.
+
+Metadata is written with `PutIfNotExists` and is never updated automatically.
+Opening a repository validates its schema version, required fields, manifest
+version, chunking algorithm, and chunk-size constraints before constructing any
+service that can read or write repository objects. A future repository format
+version, malformed document, or unsupported persisted configuration prevents
+the repository from opening.
+
+When the key is absent, metadata is created only if the database contains no
+other keys. A nonempty database without `repository:metadata` is treated as a
+legacy repository and rejected. Strata does not silently adopt or migrate such
+a repository.
+
 ## Badger Keys
 
 Logical objects are separated by ASCII prefixes followed by binary CIDs:
 
 | Object | Key construction | Key size |
 | --- | --- | ---: |
+| Repository metadata | `repository:metadata` | 19 bytes |
 | Chunk | `chunk:` + 34 CID bytes | 40 bytes |
 | Manifest | `manifest:` + 34 CID bytes | 43 bytes |
 
@@ -84,10 +133,17 @@ The default write policy is BLAKE3 with FastCDC sizes of 256 KiB minimum,
 1 MiB target, and 4 MiB maximum. Existing objects remain readable because
 their CIDs carry their algorithm and manifests carry their format version.
 
-The repository does not persist the chunking configuration used by earlier
-writes. Operators should keep hashing and chunking settings stable. A change
-does not make old data unreadable, but it changes future boundaries and reduces
-deduplication between old and new files.
+The repository metadata is the compatibility boundary for chunking. On reopen,
+the configured chunking algorithm and sizes must exactly match the persisted
+values. Strata rejects a mismatch before exposing read or write operations, so
+chunk boundaries cannot change silently within a repository.
+
+Hash algorithms follow a different rule. Every chunk and manifest CID embeds
+its hash algorithm, allowing reads to select the correct verifier independently
+of the current write preference. The repository metadata therefore does not
+persist a list of hash algorithms supported by the build. Persisted chunking
+and CID algorithm identifiers are validated against the algorithms implemented
+by the running Strata version.
 
 ## Format Change Checklist
 

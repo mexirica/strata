@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mexirica/strata/internal/cid"
+	"github.com/mexirica/strata/internal/metadata"
 	"github.com/mexirica/strata/internal/node"
 	"github.com/mexirica/strata/internal/storage"
 )
@@ -33,7 +34,7 @@ func TestNew_RejectsIncompatibleConfigBeforeOpeningStorage(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "must-not-exist")
 	config := validConfig(dataDir)
 	config.MaxChunks = 1
-	if _, err := node.New(config); !errors.Is(err, node.ErrInvalidConfig) {
+	if _, err := node.New(context.Background(), config); !errors.Is(err, node.ErrInvalidConfig) {
 		t.Fatalf("New returned %v, want ErrInvalidConfig", err)
 	}
 	if _, err := os.Stat(dataDir); !errors.Is(err, os.ErrNotExist) {
@@ -41,8 +42,35 @@ func TestNew_RejectsIncompatibleConfigBeforeOpeningStorage(t *testing.T) {
 	}
 }
 
+func TestNew_RejectsLegacyRepositoryAndClosesStorage(t *testing.T) {
+	ctx := context.Background()
+	dataDir := filepath.Join(t.TempDir(), "data")
+	db, err := storage.NewBadger(dataDir)
+	if err != nil {
+		t.Fatalf("NewBadger: %v", err)
+	}
+	if err := db.Put(ctx, []byte("chunk:legacy"), []byte("data")); err != nil {
+		t.Fatalf("seed legacy object: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close seeded storage: %v", err)
+	}
+
+	if _, err := node.New(ctx, validConfig(dataDir)); !errors.Is(err, metadata.ErrLegacyRepository) {
+		t.Fatalf("New returned %v, want ErrLegacyRepository", err)
+	}
+
+	reopened, err := storage.NewBadger(dataDir)
+	if err != nil {
+		t.Fatalf("storage remained locked after New failed: %v", err)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatalf("close reopened storage: %v", err)
+	}
+}
+
 func TestNode_StoreRetrieveDeleteGCAndScrub(t *testing.T) {
-	n, err := node.New(validConfig(filepath.Join(t.TempDir(), "data")))
+	n, err := node.New(context.Background(), validConfig(filepath.Join(t.TempDir(), "data")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -89,7 +117,7 @@ func TestNode_StoreRetrieveDeleteGCAndScrub(t *testing.T) {
 }
 
 func TestNode_GCWaitsForOpenRetrieval(t *testing.T) {
-	n, err := node.New(validConfig(filepath.Join(t.TempDir(), "data")))
+	n, err := node.New(context.Background(), validConfig(filepath.Join(t.TempDir(), "data")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -127,7 +155,7 @@ func TestNode_GCWaitsForOpenRetrieval(t *testing.T) {
 }
 
 func TestNode_GCConcurrentWithStoreRetrieveAndDelete(t *testing.T) {
-	n, err := node.New(validConfig(filepath.Join(t.TempDir(), "data")))
+	n, err := node.New(context.Background(), validConfig(filepath.Join(t.TempDir(), "data")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mexirica/strata/internal/cas"
 	"github.com/mexirica/strata/internal/chunker"
@@ -17,6 +18,7 @@ import (
 	"github.com/mexirica/strata/internal/hasher"
 	"github.com/mexirica/strata/internal/maintenance"
 	"github.com/mexirica/strata/internal/manifeststore"
+	"github.com/mexirica/strata/internal/metadata"
 	"github.com/mexirica/strata/internal/storage"
 )
 
@@ -45,7 +47,7 @@ type Node struct {
 	closeErr  error
 }
 
-func New(config Config) (*Node, error) {
+func New(ctx context.Context, config Config) (*Node, error) {
 	if err := validateConfig(config); err != nil {
 		return nil, err
 	}
@@ -73,6 +75,23 @@ func New(config Config) (*Node, error) {
 		return nil, err
 	}
 
+	metadataStore, err := metadata.NewStore(db)
+	if err != nil {
+		return closeOnError(fmt.Errorf("create metadata store: %w", err))
+	}
+	repoMetadata := metadata.NewMetadata(time.Now(), "development", metadata.Chunking{
+		Algorithm:  chunker.FastCDC,
+		MinSize:    config.MinChunkSize,
+		NormalSize: config.NormalChunkSize,
+		MaxSize:    config.MaxChunkSize,
+	})
+	storedMetadata, err := metadataStore.LoadOrCreate(ctx, repoMetadata)
+	if err != nil {
+		return closeOnError(fmt.Errorf("initialize repository metadata: %w", err))
+	}
+	if err := storedMetadata.ValidateCompatibility(repoMetadata); err != nil {
+		return closeOnError(fmt.Errorf("validate repository metadata: %w", err))
+	}
 	casStore, err := cas.NewCAS(db, contentHasher, cas.Config{MaxObjectSize: int64(config.MaxChunkSize)})
 	if err != nil {
 		return closeOnError(fmt.Errorf("create CAS: %w", err))
