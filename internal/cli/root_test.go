@@ -2,10 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mexirica/strata/internal/metadata"
+	"github.com/mexirica/strata/internal/storage"
 )
 
 func TestCLIWorkflow(t *testing.T) {
@@ -62,6 +67,47 @@ func TestCLIWorkflow(t *testing.T) {
 	}
 	if output := executeCommand(t, "--config", configPath, "scrub"); output != "issues=0\n" {
 		t.Fatalf("scrub output = %q", output)
+	}
+}
+
+func TestInitUsesChunkingEnvironmentOverrides(t *testing.T) {
+	t.Setenv("STRATA_MIN_CHUNK_SIZE", "524288")
+	t.Setenv("STRATA_NORMAL_CHUNK_SIZE", "2097152")
+	t.Setenv("STRATA_MAX_CHUNK_SIZE", "4194304")
+	temporaryDir := t.TempDir()
+	configPath := filepath.Join(temporaryDir, "strata.yaml")
+	executeCommand(t, "--config", configPath, "init", "--normal-chunk-size", "1048576")
+
+	db, err := storage.NewBadger(filepath.Join(temporaryDir, ".strata", "data"))
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store, err := metadata.NewStore(db)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	stored, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load metadata: %v", err)
+	}
+	if stored.Chunking.MinSize != 524288 || stored.Chunking.NormalSize != 1048576 || stored.Chunking.MaxSize != 4194304 {
+		t.Fatalf("persisted chunking = %+v", stored.Chunking)
+	}
+}
+
+func TestRepeatedInitReportsIncompatibleChunking(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "strata.yaml")
+	executeCommand(t, "--config", configPath, "init")
+
+	command := NewRootCommand()
+	command.SetArgs([]string{"--config", configPath, "init", "--normal-chunk-size", "2097152"})
+	err := command.Execute()
+	if !errors.Is(err, metadata.ErrIncompatibleRepository) {
+		t.Fatalf("repeated init returned %v, want ErrIncompatibleRepository", err)
+	}
+	if !strings.Contains(err.Error(), "chunking:") || !strings.Contains(err.Error(), "requested=") {
+		t.Fatalf("repeated init error does not identify incompatible values: %v", err)
 	}
 }
 

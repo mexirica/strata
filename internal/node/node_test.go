@@ -149,6 +149,31 @@ func TestOpenUsesPersistedChunkingAndReadsOldCIDAlgorithm(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsWriteLimitsChunkingCannotRepresent(t *testing.T) {
+	ctx := context.Background()
+	dataDir := filepath.Join(t.TempDir(), "data")
+	n, err := node.Init(ctx, validInitConfig(dataDir))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := n.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	config := validConfig(dataDir)
+	config.MaxChunks = 1
+	config.MaxFileSize = 65
+	_, err = node.Open(ctx, config)
+	if !errors.Is(err, node.ErrInvalidConfig) {
+		t.Fatalf("Open returned %v, want ErrInvalidConfig", err)
+	}
+	for _, value := range []string{"max_file_size=65", "max_chunks=1", "min_chunk_size=64"} {
+		if !strings.Contains(err.Error(), value) {
+			t.Fatalf("Open error %q does not contain %q", err, value)
+		}
+	}
+}
+
 func TestNode_StoreRetrieveDeleteGCAndScrub(t *testing.T) {
 	n, err := node.Init(context.Background(), validInitConfig(filepath.Join(t.TempDir(), "data")))
 	if err != nil {

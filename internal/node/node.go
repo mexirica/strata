@@ -104,6 +104,9 @@ func open(ctx context.Context, config Config, candidate *metadata.Metadata) (*No
 	if err != nil {
 		return closeOnError(fmt.Errorf("initialize repository metadata: %w", err))
 	}
+	if err := validateWriteLimits(config, storedMetadata.Chunking); err != nil {
+		return closeOnError(err)
+	}
 
 	fileChunker, err := chunker.NewCDC(chunker.Config{
 		Algorithm:  storedMetadata.Chunking.Algorithm,
@@ -164,6 +167,20 @@ func validateConfig(config Config) error {
 	maxInt := int(^uint(0) >> 1)
 	if config.MaxChunks > (maxInt-34-config.MaxNameBytes)/34 {
 		return fmt.Errorf("%w: manifest size overflows int", ErrInvalidConfig)
+	}
+	return nil
+}
+
+func validateWriteLimits(config Config, chunking metadata.Chunking) error {
+	maxRepresentableFileSize := int64(config.MaxChunks) * int64(chunking.MinSize)
+	if config.MaxFileSize > maxRepresentableFileSize {
+		return fmt.Errorf(
+			"%w: max_file_size=%d exceeds max_chunks=%d * repository min_chunk_size=%d",
+			ErrInvalidConfig,
+			config.MaxFileSize,
+			config.MaxChunks,
+			chunking.MinSize,
+		)
 	}
 	return nil
 }

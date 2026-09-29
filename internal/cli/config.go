@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mexirica/strata/internal/chunker"
 	"github.com/mexirica/strata/internal/cid"
 	"github.com/mexirica/strata/internal/node"
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"go.yaml.in/yaml/v3"
 )
@@ -74,9 +76,35 @@ func (c config) nodeConfig() (node.Config, error) {
 	}, nil
 }
 
-func writeDefaultConfig(path string) error {
+func loadInitChunking(flags *pflag.FlagSet) (chunker.Config, error) {
+	defaults := chunker.DefaultConfig()
+	v := viper.New()
+	v.SetEnvPrefix("STRATA")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+	v.SetDefault("min_chunk_size", defaults.MinSize)
+	v.SetDefault("normal_chunk_size", defaults.NormalSize)
+	v.SetDefault("max_chunk_size", defaults.MaxSize)
+	for key, flag := range map[string]string{
+		"min_chunk_size":    "min-chunk-size",
+		"normal_chunk_size": "normal-chunk-size",
+		"max_chunk_size":    "max-chunk-size",
+	} {
+		if err := v.BindPFlag(key, flags.Lookup(flag)); err != nil {
+			return chunker.Config{}, fmt.Errorf("bind %s: %w", flag, err)
+		}
+	}
+	return chunker.Config{
+		Algorithm:  chunker.FastCDC,
+		MinSize:    v.GetInt("min_chunk_size"),
+		NormalSize: v.GetInt("normal_chunk_size"),
+		MaxSize:    v.GetInt("max_chunk_size"),
+	}, nil
+}
+
+func ensureDefaultConfig(path string) error {
 	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("config file %q already exists", path)
+		return nil
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect config file: %w", err)
 	}

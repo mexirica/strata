@@ -49,13 +49,13 @@ func Execute() error {
 }
 
 func (a *application) initCommand() *cobra.Command {
-	chunking := chunker.DefaultConfig()
+	defaultChunking := chunker.DefaultConfig()
 	command := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize a Strata repository",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := writeDefaultConfig(a.configPath); err != nil {
+			if err := ensureDefaultConfig(a.configPath); err != nil {
 				return err
 			}
 			cfg, err := loadConfig(a.configPath)
@@ -66,9 +66,13 @@ func (a *application) initCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			initChunking, err := loadInitChunking(cmd.Flags())
+			if err != nil {
+				return err
+			}
 			n, err := node.Init(cmd.Context(), node.InitConfig{
 				Config:   nodeConfig,
-				Chunking: chunking,
+				Chunking: initChunking,
 			})
 			if err != nil {
 				return fmt.Errorf("initialize repository: %w", err)
@@ -80,9 +84,9 @@ func (a *application) initCommand() *cobra.Command {
 			return nil
 		},
 	}
-	command.Flags().IntVar(&chunking.MinSize, "min-chunk-size", chunking.MinSize, "minimum chunk size for this repository")
-	command.Flags().IntVar(&chunking.NormalSize, "normal-chunk-size", chunking.NormalSize, "target chunk size for this repository")
-	command.Flags().IntVar(&chunking.MaxSize, "max-chunk-size", chunking.MaxSize, "maximum chunk size for this repository")
+	command.Flags().Int("min-chunk-size", defaultChunking.MinSize, "minimum chunk size for this repository")
+	command.Flags().Int("normal-chunk-size", defaultChunking.NormalSize, "target chunk size for this repository")
+	command.Flags().Int("max-chunk-size", defaultChunking.MaxSize, "maximum chunk size for this repository")
 	return command
 }
 

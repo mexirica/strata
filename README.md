@@ -180,6 +180,12 @@ in repository metadata. To override the FastCDC defaults for a new repository:
 strata init --min-chunk-size 262144 --normal-chunk-size 1048576 --max-chunk-size 4194304
 ```
 
+The equivalent `STRATA_MIN_CHUNK_SIZE`, `STRATA_NORMAL_CHUNK_SIZE`, and
+`STRATA_MAX_CHUNK_SIZE` environment variables are also accepted by `init`.
+Explicit flags take precedence over environment values. Running `init` again
+keeps the existing YAML and validates the requested chunking against repository
+metadata.
+
 Configuration has four compatibility classes:
 
 | Class | Examples | Policy |
