@@ -174,6 +174,32 @@ func TestOpenRejectsWriteLimitsChunkingCannotRepresent(t *testing.T) {
 	}
 }
 
+func TestFailedInitDoesNotPersistChunking(t *testing.T) {
+	ctx := context.Background()
+	dataDir := filepath.Join(t.TempDir(), "data")
+	invalid := validInitConfig(dataDir)
+	invalid.MaxFileSize = int64(invalid.MaxChunks*invalid.Chunking.MinSize) + 1
+
+	if _, err := node.Init(ctx, invalid); !errors.Is(err, node.ErrInvalidConfig) {
+		t.Fatalf("Init returned %v, want ErrInvalidConfig", err)
+	}
+	if _, err := os.Stat(dataDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid init touched data directory: %v", err)
+	}
+
+	retry := validInitConfig(dataDir)
+	retry.Chunking.MinSize = 128
+	retry.Chunking.NormalSize = 256
+	retry.Chunking.MaxSize = 512
+	n, err := node.Init(ctx, retry)
+	if err != nil {
+		t.Fatalf("retry Init: %v", err)
+	}
+	if err := n.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
 func TestNode_StoreRetrieveDeleteGCAndScrub(t *testing.T) {
 	n, err := node.Init(context.Background(), validInitConfig(filepath.Join(t.TempDir(), "data")))
 	if err != nil {

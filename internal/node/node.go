@@ -63,6 +63,9 @@ func Init(ctx context.Context, config InitConfig) (*Node, error) {
 		NormalSize: config.Chunking.NormalSize,
 		MaxSize:    config.Chunking.MaxSize,
 	})
+	if err := validateWriteLimits(config.Config, repoMetadata.Chunking); err != nil {
+		return nil, err
+	}
 	return open(ctx, config.Config, &repoMetadata)
 }
 
