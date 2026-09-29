@@ -80,7 +80,8 @@ lifecycle to Cobra command execution.
 
 - The repository is local and single-process.
 - A CLI invocation opens and closes a node for one command.
-- Configuration is not stored inside the repository.
+- Repository format and chunking configuration are stored in immutable
+    repository metadata; invocation preferences and write limits are not.
 - There is no schema migration or repository-format negotiation layer.
 - Reachability for garbage collection is held in memory.
 - Maintenance scans use paginated snapshots rather than one database-wide

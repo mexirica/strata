@@ -150,9 +150,6 @@ also available in [strata.yaml.example](strata.yaml.example).
 ```yaml
 data_dir: .strata/data
 hash_algorithm: blake3
-min_chunk_size: 262144
-normal_chunk_size: 1048576
-max_chunk_size: 4194304
 max_file_size: 10737418240
 max_chunks: 40960
 max_name_bytes: 4096
@@ -161,13 +158,10 @@ max_name_bytes: 4096
 | Setting | Default | Description |
 | --- | ---: | --- |
 | `data_dir` | `.strata/data` | BadgerDB repository directory |
-| `hash_algorithm` | `blake3` | Content hash: `blake3` or `sha256` |
-| `min_chunk_size` | `262144` | Minimum chunk size in bytes |
-| `normal_chunk_size` | `1048576` | Target chunk size in bytes; must be a power of two |
-| `max_chunk_size` | `4194304` | Maximum chunk size in bytes |
-| `max_file_size` | `10737418240` | Maximum accepted file size in bytes |
-| `max_chunks` | `40960` | Maximum chunks in one file manifest |
-| `max_name_bytes` | `4096` | Maximum UTF-8 file name length in bytes |
+| `hash_algorithm` | `blake3` | Content hash for new writes: `blake3` or `sha256` |
+| `max_file_size` | `10737418240` | Maximum accepted size for a new file |
+| `max_chunks` | `40960` | Maximum chunks in a new file manifest |
+| `max_name_bytes` | `4096` | Maximum UTF-8 name length for a new manifest |
 
 Settings can be overridden with environment variables prefixed by `STRATA_`:
 
@@ -179,9 +173,27 @@ STRATA_HASH_ALGORITHM=sha256 strata --config ./archive.yaml init
 Relative `data_dir` values are resolved from the directory containing the
 configuration file.
 
-> [!IMPORTANT]
-> The hash algorithm and chunking parameters determine stored object IDs.
-> Keep them consistent for the lifetime of a repository.
+Chunking is selected only when the repository is initialized and is persisted
+in repository metadata. To override the FastCDC defaults for a new repository:
+
+```bash
+strata init --min-chunk-size 262144 --normal-chunk-size 1048576 --max-chunk-size 4194304
+```
+
+The equivalent `STRATA_MIN_CHUNK_SIZE`, `STRATA_NORMAL_CHUNK_SIZE`, and
+`STRATA_MAX_CHUNK_SIZE` environment variables are also accepted by `init`.
+Explicit flags take precedence over environment values. Running `init` again
+keeps the existing YAML and validates the requested chunking against repository
+metadata.
+
+Configuration has four compatibility classes:
+
+| Class | Examples | Policy |
+| --- | --- | --- |
+| Immutable format | Repository and manifest format versions | Persisted and validated when opening |
+| Persisted write policy | Chunking algorithm and sizes | Selected by `init`; metadata is the source of truth |
+| Operational preference | Data directory and hash algorithm | May change between invocations; hash affects only new CIDs |
+| Write safety limit | Maximum file size, chunk count, and name size | Applies to new writes and does not invalidate existing objects |
 
 ## Repository Maintenance
 

@@ -6,33 +6,29 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mexirica/strata/internal/chunker"
 	"github.com/mexirica/strata/internal/cid"
 	"github.com/mexirica/strata/internal/node"
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"go.yaml.in/yaml/v3"
 )
 
 type config struct {
-	DataDir         string `mapstructure:"data_dir" yaml:"data_dir"`
-	HashAlgorithm   string `mapstructure:"hash_algorithm" yaml:"hash_algorithm"`
-	MinChunkSize    int    `mapstructure:"min_chunk_size" yaml:"min_chunk_size"`
-	NormalChunkSize int    `mapstructure:"normal_chunk_size" yaml:"normal_chunk_size"`
-	MaxChunkSize    int    `mapstructure:"max_chunk_size" yaml:"max_chunk_size"`
-	MaxFileSize     int64  `mapstructure:"max_file_size" yaml:"max_file_size"`
-	MaxChunks       int    `mapstructure:"max_chunks" yaml:"max_chunks"`
-	MaxNameBytes    int    `mapstructure:"max_name_bytes" yaml:"max_name_bytes"`
+	DataDir       string `mapstructure:"data_dir" yaml:"data_dir"`
+	HashAlgorithm string `mapstructure:"hash_algorithm" yaml:"hash_algorithm"`
+	MaxFileSize   int64  `mapstructure:"max_file_size" yaml:"max_file_size"`
+	MaxChunks     int    `mapstructure:"max_chunks" yaml:"max_chunks"`
+	MaxNameBytes  int    `mapstructure:"max_name_bytes" yaml:"max_name_bytes"`
 }
 
 func defaultConfig() config {
 	return config{
-		DataDir:         ".strata/data",
-		HashAlgorithm:   "blake3",
-		MinChunkSize:    256 * 1024,
-		NormalChunkSize: 1024 * 1024,
-		MaxChunkSize:    4 * 1024 * 1024,
-		MaxFileSize:     10 * 1024 * 1024 * 1024,
-		MaxChunks:       40960,
-		MaxNameBytes:    4096,
+		DataDir:       ".strata/data",
+		HashAlgorithm: "blake3",
+		MaxFileSize:   10 * 1024 * 1024 * 1024,
+		MaxChunks:     40960,
+		MaxNameBytes:  4096,
 	}
 }
 
@@ -45,9 +41,6 @@ func loadConfig(path string) (config, error) {
 	defaults := defaultConfig()
 	v.SetDefault("data_dir", defaults.DataDir)
 	v.SetDefault("hash_algorithm", defaults.HashAlgorithm)
-	v.SetDefault("min_chunk_size", defaults.MinChunkSize)
-	v.SetDefault("normal_chunk_size", defaults.NormalChunkSize)
-	v.SetDefault("max_chunk_size", defaults.MaxChunkSize)
 	v.SetDefault("max_file_size", defaults.MaxFileSize)
 	v.SetDefault("max_chunks", defaults.MaxChunks)
 	v.SetDefault("max_name_bytes", defaults.MaxNameBytes)
@@ -75,20 +68,43 @@ func (c config) nodeConfig() (node.Config, error) {
 		return node.Config{}, fmt.Errorf("unsupported hash_algorithm %q", c.HashAlgorithm)
 	}
 	return node.Config{
-		DataDir:         c.DataDir,
-		HashAlgorithm:   algorithm,
-		MinChunkSize:    c.MinChunkSize,
-		NormalChunkSize: c.NormalChunkSize,
-		MaxChunkSize:    c.MaxChunkSize,
-		MaxFileSize:     c.MaxFileSize,
-		MaxChunks:       c.MaxChunks,
-		MaxNameBytes:    c.MaxNameBytes,
+		DataDir:       c.DataDir,
+		HashAlgorithm: algorithm,
+		MaxFileSize:   c.MaxFileSize,
+		MaxChunks:     c.MaxChunks,
+		MaxNameBytes:  c.MaxNameBytes,
 	}, nil
 }
 
-func writeDefaultConfig(path string) error {
+func loadInitChunking(flags *pflag.FlagSet) (chunker.Config, error) {
+	defaults := chunker.DefaultConfig()
+	v := viper.New()
+	v.SetEnvPrefix("STRATA")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+	v.SetDefault("min_chunk_size", defaults.MinSize)
+	v.SetDefault("normal_chunk_size", defaults.NormalSize)
+	v.SetDefault("max_chunk_size", defaults.MaxSize)
+	for key, flag := range map[string]string{
+		"min_chunk_size":    "min-chunk-size",
+		"normal_chunk_size": "normal-chunk-size",
+		"max_chunk_size":    "max-chunk-size",
+	} {
+		if err := v.BindPFlag(key, flags.Lookup(flag)); err != nil {
+			return chunker.Config{}, fmt.Errorf("bind %s: %w", flag, err)
+		}
+	}
+	return chunker.Config{
+		Algorithm:  chunker.FastCDC,
+		MinSize:    v.GetInt("min_chunk_size"),
+		NormalSize: v.GetInt("normal_chunk_size"),
+		MaxSize:    v.GetInt("max_chunk_size"),
+	}, nil
+}
+
+func ensureDefaultConfig(path string) error {
 	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("config file %q already exists", path)
+		return nil
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect config file: %w", err)
 	}

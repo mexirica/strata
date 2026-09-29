@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/dustin/go-humanize"
+	"github.com/mexirica/strata/internal/chunker"
 	"github.com/mexirica/strata/internal/cid"
 	"github.com/mexirica/strata/internal/maintenance"
 	"github.com/mexirica/strata/internal/node"
@@ -48,12 +49,13 @@ func Execute() error {
 }
 
 func (a *application) initCommand() *cobra.Command {
-	return &cobra.Command{
+	defaultChunking := chunker.DefaultConfig()
+	command := &cobra.Command{
 		Use:   "init",
-		Short: "Create a Strata repository configuration",
+		Short: "Initialize a Strata repository",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := writeDefaultConfig(a.configPath); err != nil {
+			if err := ensureDefaultConfig(a.configPath); err != nil {
 				return err
 			}
 			cfg, err := loadConfig(a.configPath)
@@ -64,7 +66,14 @@ func (a *application) initCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			n, err := node.New(cmd.Context(), nodeConfig)
+			initChunking, err := loadInitChunking(cmd.Flags())
+			if err != nil {
+				return err
+			}
+			n, err := node.Init(cmd.Context(), node.InitConfig{
+				Config:   nodeConfig,
+				Chunking: initChunking,
+			})
 			if err != nil {
 				return fmt.Errorf("initialize repository: %w", err)
 			}
@@ -75,6 +84,10 @@ func (a *application) initCommand() *cobra.Command {
 			return nil
 		},
 	}
+	command.Flags().Int("min-chunk-size", defaultChunking.MinSize, "minimum chunk size for this repository")
+	command.Flags().Int("normal-chunk-size", defaultChunking.NormalSize, "target chunk size for this repository")
+	command.Flags().Int("max-chunk-size", defaultChunking.MaxSize, "maximum chunk size for this repository")
+	return command
 }
 
 func (a *application) addCommand() *cobra.Command {
@@ -265,7 +278,7 @@ func (a *application) withNode(ctx context.Context, operation func(*node.Node) e
 	if err != nil {
 		return err
 	}
-	n, err := node.New(ctx, nodeConfig)
+	n, err := node.Open(ctx, nodeConfig)
 	if err != nil {
 		return fmt.Errorf("open repository: %w", err)
 	}

@@ -131,7 +131,7 @@ func (m Metadata) ValidateCompatibility(candidate Metadata) error {
 			ErrIncompatibleRepository, m.ManifestFormatVersion, candidate.ManifestFormatVersion)
 	}
 	if m.Chunking != candidate.Chunking {
-		return fmt.Errorf("%w: repository=%+v configured=%+v",
+		return fmt.Errorf("%w: chunking: repository=%+v requested=%+v",
 			ErrIncompatibleRepository, m.Chunking, candidate.Chunking)
 	}
 	return nil
