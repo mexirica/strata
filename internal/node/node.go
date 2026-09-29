@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mexirica/strata/internal/buildinfo"
 	"github.com/mexirica/strata/internal/cas"
 	"github.com/mexirica/strata/internal/chunker"
 	"github.com/mexirica/strata/internal/cid"
@@ -27,14 +28,16 @@ const maintenancePageSize = 1000
 var ErrInvalidConfig = errors.New("invalid node config")
 
 type Config struct {
-	DataDir         string
-	HashAlgorithm   cid.Algorithm
-	MinChunkSize    int
-	NormalChunkSize int
-	MaxChunkSize    int
-	MaxFileSize     int64
-	MaxChunks       int
-	MaxNameBytes    int
+	DataDir       string
+	HashAlgorithm cid.Algorithm
+	MaxFileSize   int64
+	MaxChunks     int
+	MaxNameBytes  int
+}
+
+type InitConfig struct {
+	Config
+	Chunking chunker.Config
 }
 
 type Node struct {
@@ -47,20 +50,30 @@ type Node struct {
 	closeErr  error
 }
 
-func New(ctx context.Context, config Config) (*Node, error) {
+func Init(ctx context.Context, config InitConfig) (*Node, error) {
+	if err := validateConfig(config.Config); err != nil {
+		return nil, err
+	}
+	if _, err := chunker.NewCDC(config.Chunking); err != nil {
+		return nil, fmt.Errorf("%w: chunking: %v", ErrInvalidConfig, err)
+	}
+	repoMetadata := metadata.NewMetadata(time.Now(), buildinfo.Version, metadata.Chunking{
+		Algorithm:  config.Chunking.Algorithm,
+		MinSize:    config.Chunking.MinSize,
+		NormalSize: config.Chunking.NormalSize,
+		MaxSize:    config.Chunking.MaxSize,
+	})
+	return open(ctx, config.Config, &repoMetadata)
+}
+
+func Open(ctx context.Context, config Config) (*Node, error) {
 	if err := validateConfig(config); err != nil {
 		return nil, err
 	}
+	return open(ctx, config, nil)
+}
 
-	fileChunker, err := chunker.NewCDC(chunker.Config{
-		Algorithm:  chunker.FastCDC,
-		MinSize:    config.MinChunkSize,
-		NormalSize: config.NormalChunkSize,
-		MaxSize:    config.MaxChunkSize,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create chunker: %w", err)
-	}
+func open(ctx context.Context, config Config, candidate *metadata.Metadata) (*Node, error) {
 	contentHasher, err := hasher.ForAlgorithm(config.HashAlgorithm)
 	if err != nil {
 		return nil, fmt.Errorf("create hasher: %w", err)
@@ -79,20 +92,29 @@ func New(ctx context.Context, config Config) (*Node, error) {
 	if err != nil {
 		return closeOnError(fmt.Errorf("create metadata store: %w", err))
 	}
-	repoMetadata := metadata.NewMetadata(time.Now(), "development", metadata.Chunking{
-		Algorithm:  chunker.FastCDC,
-		MinSize:    config.MinChunkSize,
-		NormalSize: config.NormalChunkSize,
-		MaxSize:    config.MaxChunkSize,
-	})
-	storedMetadata, err := metadataStore.LoadOrCreate(ctx, repoMetadata)
+	var storedMetadata metadata.Metadata
+	if candidate == nil {
+		storedMetadata, err = metadataStore.Load(ctx)
+	} else {
+		storedMetadata, err = metadataStore.LoadOrCreate(ctx, *candidate)
+		if err == nil {
+			err = storedMetadata.ValidateCompatibility(*candidate)
+		}
+	}
 	if err != nil {
 		return closeOnError(fmt.Errorf("initialize repository metadata: %w", err))
 	}
-	if err := storedMetadata.ValidateCompatibility(repoMetadata); err != nil {
-		return closeOnError(fmt.Errorf("validate repository metadata: %w", err))
+
+	fileChunker, err := chunker.NewCDC(chunker.Config{
+		Algorithm:  storedMetadata.Chunking.Algorithm,
+		MinSize:    storedMetadata.Chunking.MinSize,
+		NormalSize: storedMetadata.Chunking.NormalSize,
+		MaxSize:    storedMetadata.Chunking.MaxSize,
+	})
+	if err != nil {
+		return closeOnError(fmt.Errorf("create chunker from repository metadata: %w", err))
 	}
-	casStore, err := cas.NewCAS(db, contentHasher, cas.Config{MaxObjectSize: int64(config.MaxChunkSize)})
+	casStore, err := cas.NewCAS(db, contentHasher, cas.Config{MaxObjectSize: int64(storedMetadata.Chunking.MaxSize)})
 	if err != nil {
 		return closeOnError(fmt.Errorf("create CAS: %w", err))
 	}
@@ -133,24 +155,11 @@ func validateConfig(config Config) error {
 	if !config.HashAlgorithm.IsValid() {
 		return fmt.Errorf("%w: unsupported hash algorithm", ErrInvalidConfig)
 	}
-	if config.MinChunkSize <= 0 || config.NormalChunkSize <= config.MinChunkSize || config.MaxChunkSize <= config.NormalChunkSize {
-		return fmt.Errorf("%w: chunk sizes must satisfy 0 < min < normal < max", ErrInvalidConfig)
-	}
-	if config.MaxChunkSize > chunker.MaxSupportedChunkSize {
-		return fmt.Errorf("%w: maximum chunk size exceeds %d", ErrInvalidConfig, chunker.MaxSupportedChunkSize)
-	}
-	if config.NormalChunkSize&(config.NormalChunkSize-1) != 0 || config.MinChunkSize < 64 {
-		return fmt.Errorf("%w: FastCDC requires a minimum of 64 bytes and a power-of-two normal size", ErrInvalidConfig)
-	}
 	if config.MaxFileSize <= 0 || config.MaxChunks <= 0 || config.MaxNameBytes <= 0 {
 		return fmt.Errorf("%w: file, chunk count, and name limits must be greater than zero", ErrInvalidConfig)
 	}
 	if uint64(config.MaxChunks) > math.MaxUint32 || uint64(config.MaxNameBytes) > math.MaxUint32 {
 		return fmt.Errorf("%w: manifest limits exceed encoded representation", ErrInvalidConfig)
-	}
-	maxRepresentableFileSize := int64(config.MaxChunks) * int64(config.MinChunkSize)
-	if config.MaxFileSize > maxRepresentableFileSize {
-		return fmt.Errorf("%w: max chunks cannot represent max file size", ErrInvalidConfig)
 	}
 	maxInt := int(^uint(0) >> 1)
 	if config.MaxChunks > (maxInt-34-config.MaxNameBytes)/34 {

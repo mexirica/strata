@@ -24,6 +24,13 @@ func TestCLIWorkflow(t *testing.T) {
 	if _, err := os.Stat(configPath); err != nil {
 		t.Fatalf("config file was not created: %v", err)
 	}
+	generatedConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read generated config: %v", err)
+	}
+	if strings.Contains(string(generatedConfig), "chunk_size") {
+		t.Fatalf("operational config contains persisted chunking: %s", generatedConfig)
+	}
 
 	manifestCID := strings.TrimSpace(executeCommand(t, "--config", configPath, "add", inputPath))
 	if len(manifestCID) != 68 {

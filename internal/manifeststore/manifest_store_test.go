@@ -111,6 +111,55 @@ func TestManifestStore_ContentAddressedIdentity(t *testing.T) {
 	}
 }
 
+func TestManifestStore_ReadIgnoresCurrentWriteLimits(t *testing.T) {
+	db, err := storage.NewInMemoryBadger()
+	if err != nil {
+		t.Fatalf("NewInMemoryBadger: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	h := hasher.NewBlake3Hasher()
+	writer, err := manifeststore.NewManifestStore(db, h, manifeststore.Config{
+		MaxManifestSize: 1024,
+		MaxNameBytes:    128,
+		MaxChunks:       8,
+		MaxPageSize:     100,
+	})
+	if err != nil {
+		t.Fatalf("NewManifestStore writer: %v", err)
+	}
+	chunkCID := h.Hash([]byte("chunk"))
+	manifest := manifeststore.FileManifest{
+		Version: manifeststore.CurrentVersion,
+		Name:    "existing-long-name.bin",
+		Size:    10,
+		Chunks:  []cid.CID{chunkCID, chunkCID},
+	}
+	manifestCID, err := writer.Put(context.Background(), manifest)
+	if err != nil {
+		t.Fatalf("Put existing manifest: %v", err)
+	}
+
+	reader, err := manifeststore.NewManifestStore(db, h, manifeststore.Config{
+		MaxManifestSize: len("strata-manifest\x00") + 19,
+		MaxNameBytes:    4,
+		MaxChunks:       1,
+		MaxPageSize:     100,
+	})
+	if err != nil {
+		t.Fatalf("NewManifestStore reader: %v", err)
+	}
+	got, err := reader.Get(context.Background(), manifestCID)
+	if err != nil {
+		t.Fatalf("Get existing manifest with lower write limits: %v", err)
+	}
+	if got.Name != manifest.Name || len(got.Chunks) != len(manifest.Chunks) {
+		t.Fatalf("Get returned %+v, want %+v", got, manifest)
+	}
+	if _, err := reader.Put(context.Background(), manifest); !errors.Is(err, manifeststore.ErrInvalidManifest) {
+		t.Fatalf("Put over current write limits returned %v, want ErrInvalidManifest", err)
+	}
+}
+
 func TestManifestStore_Pagination(t *testing.T) {
 	store, _ := setupManifestStore(t)
 	ctx := context.Background()

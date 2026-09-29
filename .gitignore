@@ -2,6 +2,7 @@
 .strata
 .strata.yaml
 strata.yaml
+strata-roadmap-backlog.md
 next_steps.md
 .env
 .env.*

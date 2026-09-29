@@ -7,10 +7,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/mexirica/strata/internal/chunker"
 	"github.com/mexirica/strata/internal/cid"
 	"github.com/mexirica/strata/internal/metadata"
 	"github.com/mexirica/strata/internal/node"
@@ -19,23 +21,32 @@ import (
 
 func validConfig(dataDir string) node.Config {
 	return node.Config{
-		DataDir:         dataDir,
-		HashAlgorithm:   cid.AlgBlake3,
-		MinChunkSize:    64,
-		NormalChunkSize: 128,
-		MaxChunkSize:    256,
-		MaxFileSize:     512,
-		MaxChunks:       8,
-		MaxNameBytes:    128,
+		DataDir:       dataDir,
+		HashAlgorithm: cid.AlgBlake3,
+		MaxFileSize:   512,
+		MaxChunks:     8,
+		MaxNameBytes:  128,
+	}
+}
+
+func validInitConfig(dataDir string) node.InitConfig {
+	return node.InitConfig{
+		Config: validConfig(dataDir),
+		Chunking: chunker.Config{
+			Algorithm:  chunker.FastCDC,
+			MinSize:    64,
+			NormalSize: 128,
+			MaxSize:    256,
+		},
 	}
 }
 
 func TestNew_RejectsIncompatibleConfigBeforeOpeningStorage(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "must-not-exist")
 	config := validConfig(dataDir)
-	config.MaxChunks = 1
-	if _, err := node.New(context.Background(), config); !errors.Is(err, node.ErrInvalidConfig) {
-		t.Fatalf("New returned %v, want ErrInvalidConfig", err)
+	config.MaxChunks = 0
+	if _, err := node.Open(context.Background(), config); !errors.Is(err, node.ErrInvalidConfig) {
+		t.Fatalf("Open returned %v, want ErrInvalidConfig", err)
 	}
 	if _, err := os.Stat(dataDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("invalid config touched data directory: %v", err)
@@ -56,8 +67,8 @@ func TestNew_RejectsLegacyRepositoryAndClosesStorage(t *testing.T) {
 		t.Fatalf("close seeded storage: %v", err)
 	}
 
-	if _, err := node.New(ctx, validConfig(dataDir)); !errors.Is(err, metadata.ErrLegacyRepository) {
-		t.Fatalf("New returned %v, want ErrLegacyRepository", err)
+	if _, err := node.Init(ctx, validInitConfig(dataDir)); !errors.Is(err, metadata.ErrLegacyRepository) {
+		t.Fatalf("Init returned %v, want ErrLegacyRepository", err)
 	}
 
 	reopened, err := storage.NewBadger(dataDir)
@@ -69,8 +80,77 @@ func TestNew_RejectsLegacyRepositoryAndClosesStorage(t *testing.T) {
 	}
 }
 
+func TestInitRejectsIncompatiblePersistedChunking(t *testing.T) {
+	ctx := context.Background()
+	dataDir := filepath.Join(t.TempDir(), "data")
+	n, err := node.Init(ctx, validInitConfig(dataDir))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := n.Close(); err != nil {
+		t.Fatalf("close initialized node: %v", err)
+	}
+
+	changed := validInitConfig(dataDir)
+	changed.Chunking.NormalSize = 256
+	changed.Chunking.MaxSize = 512
+	_, err = node.Init(ctx, changed)
+	if !errors.Is(err, metadata.ErrIncompatibleRepository) {
+		t.Fatalf("Init returned %v, want ErrIncompatibleRepository", err)
+	}
+	if !strings.Contains(err.Error(), "chunking:") || !strings.Contains(err.Error(), "repository=") || !strings.Contains(err.Error(), "requested=") {
+		t.Fatalf("incompatibility error does not identify chunking values: %v", err)
+	}
+}
+
+func TestOpenUsesPersistedChunkingAndReadsOldCIDAlgorithm(t *testing.T) {
+	ctx := context.Background()
+	dataDir := filepath.Join(t.TempDir(), "data")
+	n, err := node.Init(ctx, validInitConfig(dataDir))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	content := bytes.Repeat([]byte("strata"), 40)
+	oldCID, err := n.Store(ctx, "old.bin", bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Store with BLAKE3: %v", err)
+	}
+	if err := n.Close(); err != nil {
+		t.Fatalf("close initialized node: %v", err)
+	}
+
+	openConfig := validConfig(dataDir)
+	openConfig.HashAlgorithm = cid.AlgSHA256
+	reopened, err := node.Open(ctx, openConfig)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	reader, _, err := reopened.Retrieve(ctx, oldCID)
+	if err != nil {
+		t.Fatalf("Retrieve old CID: %v", err)
+	}
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll old CID: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close reader: %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatal("reopened node returned different content")
+	}
+	newCID, err := reopened.Store(ctx, "new.bin", bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Store with SHA-256: %v", err)
+	}
+	if oldCID.Algorithm() != cid.AlgBlake3 || newCID.Algorithm() != cid.AlgSHA256 {
+		t.Fatalf("CID algorithms old=%v new=%v", oldCID.Algorithm(), newCID.Algorithm())
+	}
+}
+
 func TestNode_StoreRetrieveDeleteGCAndScrub(t *testing.T) {
-	n, err := node.New(context.Background(), validConfig(filepath.Join(t.TempDir(), "data")))
+	n, err := node.Init(context.Background(), validInitConfig(filepath.Join(t.TempDir(), "data")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -117,7 +197,7 @@ func TestNode_StoreRetrieveDeleteGCAndScrub(t *testing.T) {
 }
 
 func TestNode_GCWaitsForOpenRetrieval(t *testing.T) {
-	n, err := node.New(context.Background(), validConfig(filepath.Join(t.TempDir(), "data")))
+	n, err := node.Init(context.Background(), validInitConfig(filepath.Join(t.TempDir(), "data")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -155,7 +235,7 @@ func TestNode_GCWaitsForOpenRetrieval(t *testing.T) {
 }
 
 func TestNode_GCConcurrentWithStoreRetrieveAndDelete(t *testing.T) {
-	n, err := node.New(context.Background(), validConfig(filepath.Join(t.TempDir(), "data")))
+	n, err := node.Init(context.Background(), validInitConfig(filepath.Join(t.TempDir(), "data")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

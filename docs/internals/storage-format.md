@@ -133,10 +133,10 @@ The default write policy is BLAKE3 with FastCDC sizes of 256 KiB minimum,
 1 MiB target, and 4 MiB maximum. Existing objects remain readable because
 their CIDs carry their algorithm and manifests carry their format version.
 
-The repository metadata is the compatibility boundary for chunking. On reopen,
-the configured chunking algorithm and sizes must exactly match the persisted
-values. Strata rejects a mismatch before exposing read or write operations, so
-chunk boundaries cannot change silently within a repository.
+The repository metadata is the source of truth for chunking. Initialization
+selects the algorithm and sizes, and every later open constructs the chunker
+from those persisted values. A repeated initialization request with different
+values is rejected with both the repository and requested settings.
 
 Hash algorithms follow a different rule. Every chunk and manifest CID embeds
 its hash algorithm, allowing reads to select the correct verifier independently
@@ -144,6 +144,13 @@ of the current write preference. The repository metadata therefore does not
 persist a list of hash algorithms supported by the build. Persisted chunking
 and CID algorithm identifiers are validated against the algorithms implemented
 by the running Strata version.
+
+Repository and manifest format versions are immutable format settings.
+Chunking is a persisted policy for new writes. The data directory and default
+hash algorithm are invocation preferences, while maximum file size, chunk
+count, and name length are write safety limits. Those limits reject new writes
+but are not applied while decoding existing manifests; structural validation
+of the encoded manifest remains mandatory.
 
 ## Format Change Checklist
 

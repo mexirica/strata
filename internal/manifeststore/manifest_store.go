@@ -185,7 +185,7 @@ func (s *ManifestStore) decodeVerified(valueCID cid.CID, data []byte) (FileManif
 }
 
 func (s *ManifestStore) encode(manifest FileManifest) ([]byte, error) {
-	if err := s.validate(manifest); err != nil {
+	if err := s.validateForWrite(manifest); err != nil {
 		return nil, err
 	}
 	total := int64(len(manifestDomain)) + 2 + 4 + int64(len(manifest.Name)) + 8 + 4 + int64(len(manifest.Chunks))*34
@@ -211,7 +211,7 @@ func (s *ManifestStore) encode(manifest FileManifest) ([]byte, error) {
 
 func (s *ManifestStore) decode(data []byte) (FileManifest, error) {
 	minimum := len(manifestDomain) + 2 + 4 + 8 + 4
-	if len(data) < minimum || len(data) > s.config.MaxManifestSize {
+	if len(data) < minimum {
 		return FileManifest{}, fmt.Errorf("%w: encoded size %d", ErrInvalidManifest, len(data))
 	}
 	if string(data[:len(manifestDomain)]) != string(manifestDomain) {
@@ -225,7 +225,7 @@ func (s *ManifestStore) decode(data []byte) (FileManifest, error) {
 	}
 	nameLength := uint64(binary.BigEndian.Uint32(data[offset:]))
 	offset += 4
-	if nameLength == 0 || nameLength > uint64(s.config.MaxNameBytes) || nameLength > uint64(len(data)-offset) {
+	if nameLength == 0 || nameLength > uint64(len(data)-offset) {
 		return FileManifest{}, fmt.Errorf("%w: invalid name length %d", ErrInvalidManifest, nameLength)
 	}
 	nameEnd := offset + int(nameLength)
@@ -244,9 +244,6 @@ func (s *ManifestStore) decode(data []byte) (FileManifest, error) {
 	}
 	chunkCount := uint64(binary.BigEndian.Uint32(data[offset:]))
 	offset += 4
-	if chunkCount > uint64(s.config.MaxChunks) {
-		return FileManifest{}, fmt.Errorf("%w: chunk count %d exceeds %d", ErrInvalidManifest, chunkCount, s.config.MaxChunks)
-	}
 	expected := uint64(offset) + chunkCount*34
 	if expected != uint64(len(data)) {
 		return FileManifest{}, fmt.Errorf("%w: encoded length mismatch", ErrInvalidManifest)
@@ -261,24 +258,34 @@ func (s *ManifestStore) decode(data []byte) (FileManifest, error) {
 		offset += 34
 	}
 	manifest := FileManifest{Version: version, Name: string(nameBytes), Size: int64(size), Chunks: chunks}
-	if err := s.validate(manifest); err != nil {
+	if err := validateDecoded(manifest); err != nil {
 		return FileManifest{}, err
 	}
 	return manifest, nil
 }
 
-func (s *ManifestStore) validate(manifest FileManifest) error {
+func (s *ManifestStore) validateForWrite(manifest FileManifest) error {
+	if err := validateDecoded(manifest); err != nil {
+		return err
+	}
+	if len(manifest.Name) > s.config.MaxNameBytes {
+		return fmt.Errorf("%w: name exceeds %d bytes", ErrInvalidManifest, s.config.MaxNameBytes)
+	}
+	if len(manifest.Chunks) > s.config.MaxChunks {
+		return fmt.Errorf("%w: chunk count exceeds %d", ErrInvalidManifest, s.config.MaxChunks)
+	}
+	return nil
+}
+
+func validateDecoded(manifest FileManifest) error {
 	if manifest.Version != CurrentVersion {
 		return fmt.Errorf("%w: %d", ErrUnsupportedVersion, manifest.Version)
 	}
-	if len(manifest.Name) == 0 || len(manifest.Name) > s.config.MaxNameBytes || !utf8.ValidString(manifest.Name) {
+	if len(manifest.Name) == 0 || !utf8.ValidString(manifest.Name) {
 		return fmt.Errorf("%w: invalid name", ErrInvalidManifest)
 	}
 	if manifest.Size < 0 {
 		return fmt.Errorf("%w: negative file size", ErrInvalidManifest)
-	}
-	if len(manifest.Chunks) > s.config.MaxChunks {
-		return fmt.Errorf("%w: too many chunks", ErrInvalidManifest)
 	}
 	if manifest.Size > 0 && len(manifest.Chunks) == 0 {
 		return fmt.Errorf("%w: non-empty file has no chunks", ErrInvalidManifest)

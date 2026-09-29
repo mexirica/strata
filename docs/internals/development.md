@@ -90,7 +90,7 @@ restart scenarios use temporary directories.
 Areas where new work should begin with a design decision rather than an
 implicit behavior change:
 
-- repository format/configuration records and migrations;
+- repository format migrations;
 - bounded-memory reachability for very large repositories;
 - stable cross-page snapshots for maintenance scans;
 - repair or quarantine after scrub findings;
