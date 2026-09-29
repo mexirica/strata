@@ -63,9 +63,6 @@ func Init(ctx context.Context, config InitConfig) (*Node, error) {
 		NormalSize: config.Chunking.NormalSize,
 		MaxSize:    config.Chunking.MaxSize,
 	})
-	if err := validateWriteLimits(config.Config, repoMetadata.Chunking); err != nil {
-		return nil, err
-	}
 	return open(ctx, config.Config, &repoMetadata)
 }
 
@@ -99,7 +96,13 @@ func open(ctx context.Context, config Config, candidate *metadata.Metadata) (*No
 	if candidate == nil {
 		storedMetadata, err = metadataStore.Load(ctx)
 	} else {
-		storedMetadata, err = metadataStore.LoadOrCreate(ctx, *candidate)
+		storedMetadata, err = metadataStore.Load(ctx)
+		if errors.Is(err, metadata.ErrRepositoryMetadataMissing) {
+			if err := validateWriteLimits(config, candidate.Chunking); err != nil {
+				return closeOnError(err)
+			}
+			storedMetadata, err = metadataStore.LoadOrCreate(ctx, *candidate)
+		}
 		if err == nil {
 			err = storedMetadata.ValidateCompatibility(*candidate)
 		}

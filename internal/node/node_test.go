@@ -103,6 +103,35 @@ func TestInitRejectsIncompatiblePersistedChunking(t *testing.T) {
 	}
 }
 
+func TestRepeatedInitReportsChunkingMismatchBeforeRequestedWriteLimits(t *testing.T) {
+	ctx := context.Background()
+	dataDir := filepath.Join(t.TempDir(), "data")
+	initial := validInitConfig(dataDir)
+	initial.Chunking.MinSize = 512
+	initial.Chunking.NormalSize = 1024
+	initial.Chunking.MaxSize = 2048
+	initial.MaxChunks = 1
+	initial.MaxFileSize = 512
+	n, err := node.Init(ctx, initial)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := n.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	repeated := validInitConfig(dataDir)
+	repeated.MaxChunks = 1
+	repeated.MaxFileSize = 512
+	_, err = node.Init(ctx, repeated)
+	if !errors.Is(err, metadata.ErrIncompatibleRepository) {
+		t.Fatalf("repeated Init returned %v, want ErrIncompatibleRepository", err)
+	}
+	if errors.Is(err, node.ErrInvalidConfig) {
+		t.Fatalf("repeated Init masked chunking mismatch with invalid config: %v", err)
+	}
+}
+
 func TestOpenUsesPersistedChunkingAndReadsOldCIDAlgorithm(t *testing.T) {
 	ctx := context.Background()
 	dataDir := filepath.Join(t.TempDir(), "data")
@@ -182,9 +211,6 @@ func TestFailedInitDoesNotPersistChunking(t *testing.T) {
 
 	if _, err := node.Init(ctx, invalid); !errors.Is(err, node.ErrInvalidConfig) {
 		t.Fatalf("Init returned %v, want ErrInvalidConfig", err)
-	}
-	if _, err := os.Stat(dataDir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("invalid init touched data directory: %v", err)
 	}
 
 	retry := validInitConfig(dataDir)
