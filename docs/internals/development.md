@@ -79,11 +79,14 @@ restart scenarios use temporary directories.
 
 ### Maintenance
 
-1. Treat manifests as the only reachability roots.
+1. In the current manifest-only format, treat manifests as reachability roots.
+   In the planned snapshot format, traverse every retained snapshot through its
+   directory trees and manifests before considering chunks unreachable.
 2. Keep collection mutually exclusive with facade operations.
 3. Make dry-run and destructive results distinguishable to callers.
 4. Fail toward retaining data when reachability is uncertain.
-5. Include shared-chunk and interrupted-store scenarios.
+5. Include shared-chunk, shared-subtree, removed-snapshot, and interrupted-store
+   scenarios as the corresponding formats are implemented.
 
 ## Known Gaps
 
@@ -96,3 +99,7 @@ implicit behavior change:
 - repair or quarantine after scrub findings;
 - local daemon lifecycle and Unix-socket access;
 - cross-process coordination through the repository daemon.
+- immutable snapshot and content-addressed directory-tree formats;
+- snapshot retention, selectors, structural diff, and reachability roots;
+- read-only FUSE views for selected and retained snapshots;
+- local snapshot metadata with remote S3-compatible chunks.
