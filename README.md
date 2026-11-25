@@ -59,13 +59,26 @@ by `get` and `remove`.
 ### APT (Debian/Ubuntu)
 
 ```bash
-curl -fsSL https://mexirica.github.io/strata/cli/public-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/strata-cli-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/strata-cli-archive-keyring.gpg] https://mexirica.github.io/strata/cli stable main" | sudo tee /etc/apt/sources.list.d/strata-cli.list
+curl -fsSL https://rodrigomecheri.dev/strata/cli/public-key.gpg | sudo gpg --dearmor --yes -o /usr/share/keyrings/strata-cli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/strata-cli-archive-keyring.gpg] https://rodrigomecheri.dev/strata/cli stable main" | sudo tee /etc/apt/sources.list.d/strata-cli.list
 sudo apt update && sudo apt install strata
 ```
 
 The `/cli` repository path is intentionally separate so future Strata
 executables can have independent package repositories.
+
+Existing installations that still use the previous GitHub Pages URL can
+migrate the repository with:
+
+```bash
+sudo grep -rlZ 'https://mexirica.github.io/strata' \
+    /etc/apt/sources.list \
+    /etc/apt/sources.list.d 2>/dev/null |
+    sudo xargs -0r sed -i \
+        -e 's|https://mexirica.github.io/strata|https://rodrigomecheri.dev/strata|g'
+
+sudo apt update
+```
 
 ### Go
 
@@ -268,26 +281,6 @@ the [internals documentation](docs/internals/README.md), which covers the
 architecture, data flows, concurrency model, integrity guarantees, and test
 expectations.
 
-## Project Status
-
-Strata is currently preparing its first experimental release, `v0.1.0`. The
-local CLI and single-process repository workflow are functional and covered by
-automated tests, but the project is not yet production-ready.
-
-The repository format may change before `v1.0.0`. There is not yet a supported
-backup and restore workflow, so important data should always have an independent
-copy outside Strata.
-
-Development is proceeding in stages:
-
-1. Harden repository metadata, compatibility checks, failure recovery, backup,
-	garbage collection, and integrity inspection.
-2. Add recursive file ingestion as a CLI convenience. Directories will not be
-	persisted or exposed as objects; every discovered file remains independent.
-3. Introduce an experimental hybrid backend with manifests and metadata in
-	BadgerDB and content-addressed chunks in blob storage.
-4. Add a daemon and transport-neutral API before building a TUI or distributed
-	replication.
 
 ## License
 

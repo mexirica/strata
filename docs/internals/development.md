@@ -94,5 +94,5 @@ implicit behavior change:
 - bounded-memory reachability for very large repositories;
 - stable cross-page snapshots for maintenance scans;
 - repair or quarantine after scrub findings;
-- daemon lifecycle and remote access;
-- cross-process or distributed coordination.
+- local daemon lifecycle and Unix-socket access;
+- cross-process coordination through the repository daemon.
