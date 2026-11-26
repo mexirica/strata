@@ -42,7 +42,7 @@ func validInitConfig(dataDir string) repository.InitConfig {
 	}
 }
 
-func TestNew_RejectsIncompatibleConfigBeforeOpeningStorage(t *testing.T) {
+func TestOpen_RejectsIncompatibleConfigBeforeOpeningStorage(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "must-not-exist")
 	config := validConfig(dataDir)
 	config.MaxChunks = 0
@@ -54,7 +54,7 @@ func TestNew_RejectsIncompatibleConfigBeforeOpeningStorage(t *testing.T) {
 	}
 }
 
-func TestNew_RejectsLegacyRepositoryAndClosesStorage(t *testing.T) {
+func TestInit_RejectsLegacyRepositoryAndClosesStorage(t *testing.T) {
 	ctx := context.Background()
 	dataDir := filepath.Join(t.TempDir(), "data")
 	db, err := storage.NewBadger(dataDir)
@@ -74,7 +74,7 @@ func TestNew_RejectsLegacyRepositoryAndClosesStorage(t *testing.T) {
 
 	reopened, err := storage.NewBadger(dataDir)
 	if err != nil {
-		t.Fatalf("storage remained locked after New failed: %v", err)
+		t.Fatalf("storage remained locked after Init failed: %v", err)
 	}
 	if err := reopened.Close(); err != nil {
 		t.Fatalf("close reopened storage: %v", err)

@@ -22,7 +22,12 @@ import (
 	"github.com/mexirica/strata/internal/storage"
 )
 
-const maintenancePageSize = 1000
+const (
+	maintenancePageSize     = 1000
+	manifestFixedSize       = 34
+	manifestReferenceSize   = 42
+	manifestOverflowReserve = manifestFixedSize
+)
 
 var ErrInvalidConfig = errors.New("invalid node config")
 
@@ -49,6 +54,8 @@ type Node struct {
 	closeErr  error
 }
 
+// Init creates metadata only in an empty repository, or checks compatibility
+// with existing metadata. Persisted chunking is immutable across repeated init.
 func Init(ctx context.Context, config InitConfig) (*Node, error) {
 	if err := validateConfig(config.Config); err != nil {
 		return nil, err
@@ -65,6 +72,8 @@ func Init(ctx context.Context, config InitConfig) (*Node, error) {
 	return open(ctx, config.Config, &repoMetadata)
 }
 
+// Open requires existing metadata and uses its chunking policy, not process
+// defaults. The returned Node owns storage and must be closed by the caller.
 func Open(ctx context.Context, config Config) (*Node, error) {
 	if err := validateConfig(config); err != nil {
 		return nil, err
@@ -91,23 +100,9 @@ func open(ctx context.Context, config Config, candidate *metadata.Metadata) (*No
 	if err != nil {
 		return closeOnError(fmt.Errorf("create metadata store: %w", err))
 	}
-	var storedMetadata metadata.Metadata
-	if candidate == nil {
-		storedMetadata, err = metadataStore.Load(ctx)
-	} else {
-		storedMetadata, err = metadataStore.Load(ctx)
-		if errors.Is(err, metadata.ErrRepositoryMetadataMissing) {
-			if err := validateWriteLimits(config, candidate.Chunking); err != nil {
-				return closeOnError(err)
-			}
-			storedMetadata, err = metadataStore.LoadOrCreate(ctx, *candidate)
-		}
-		if err == nil {
-			err = storedMetadata.ValidateCompatibility(*candidate)
-		}
-	}
+	storedMetadata, err := loadMetadata(ctx, metadataStore, config, candidate)
 	if err != nil {
-		return closeOnError(fmt.Errorf("initialize repository metadata: %w", err))
+		return closeOnError(err)
 	}
 	if err := validateWriteLimits(config, storedMetadata.Chunking); err != nil {
 		return closeOnError(err)
@@ -126,7 +121,7 @@ func open(ctx context.Context, config Config, candidate *metadata.Metadata) (*No
 	if err != nil {
 		return closeOnError(fmt.Errorf("create CAS: %w", err))
 	}
-	maxManifestSize := 34 + config.MaxNameBytes + 42*config.MaxChunks
+	maxManifestSize := manifestFixedSize + config.MaxNameBytes + manifestReferenceSize*config.MaxChunks
 	manifestStore, err := file.NewManifestStore(db, contentHasher, file.ManifestConfig{
 		MaxManifestSize: maxManifestSize,
 		MaxNameBytes:    config.MaxNameBytes,
@@ -156,6 +151,27 @@ func open(ctx context.Context, config Config, candidate *metadata.Metadata) (*No
 	return &Node{storage: db, files: files, gc: gc, scrubber: scrubber}, nil
 }
 
+// loadMetadata validates write limits before creating new metadata. For an
+// existing repository, compatibility takes precedence over requested limits.
+func loadMetadata(ctx context.Context, store *metadata.Store, config Config, candidate *metadata.Metadata) (metadata.Metadata, error) {
+	stored, err := store.Load(ctx)
+	if candidate != nil {
+		if errors.Is(err, metadata.ErrRepositoryMetadataMissing) {
+			if err := validateWriteLimits(config, candidate.Chunking); err != nil {
+				return metadata.Metadata{}, err
+			}
+			stored, err = store.LoadOrCreate(ctx, *candidate)
+		}
+		if err == nil {
+			err = stored.ValidateCompatibility(*candidate)
+		}
+	}
+	if err != nil {
+		return metadata.Metadata{}, fmt.Errorf("initialize repository metadata: %w", err)
+	}
+	return stored, nil
+}
+
 func validateConfig(config Config) error {
 	if strings.TrimSpace(config.DataDir) == "" {
 		return fmt.Errorf("%w: data directory must not be empty", ErrInvalidConfig)
@@ -170,7 +186,7 @@ func validateConfig(config Config) error {
 		return fmt.Errorf("%w: manifest limits exceed encoded representation", ErrInvalidConfig)
 	}
 	maxInt := int(^uint(0) >> 1)
-	if config.MaxChunks > (maxInt-42-config.MaxNameBytes)/42 {
+	if config.MaxChunks > (maxInt-manifestOverflowReserve-config.MaxNameBytes)/manifestReferenceSize {
 		return fmt.Errorf("%w: manifest size overflows int", ErrInvalidConfig)
 	}
 	return nil
@@ -196,6 +212,8 @@ func (n *Node) Store(ctx context.Context, name string, reader io.Reader) (cid.CI
 	return n.files.Store(ctx, name, reader)
 }
 
+// Retrieve holds a shared repository lock for the stream's lifetime. Callers
+// must Close even after EOF to release it and allow GC or repository shutdown.
 func (n *Node) Retrieve(ctx context.Context, manifestCID cid.CID) (io.ReadCloser, *file.FileManifest, error) {
 	n.mu.RLock()
 	reader, manifest, err := n.files.Retrieve(ctx, manifestCID)

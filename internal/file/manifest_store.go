@@ -16,7 +16,14 @@ import (
 
 const (
 	CurrentVersion            uint16 = 1
-	chunkReferenceEncodedSize int64  = 42
+	manifestCIDSize                  = 34
+	manifestVersionSize              = 2
+	manifestNameLengthSize           = 4
+	manifestSizeFieldSize            = 8
+	manifestChunkCountSize           = 4
+	manifestTrailerSize              = manifestSizeFieldSize + manifestChunkCountSize
+	manifestFieldsSize               = manifestVersionSize + manifestNameLengthSize + manifestTrailerSize
+	chunkReferenceEncodedSize int64  = manifestCIDSize + manifestSizeFieldSize
 )
 
 var (
@@ -68,13 +75,13 @@ func NewManifestStore(store storage.ObjectStorage, defaultHasher hasher.Hasher, 
 	if defaultHasher == nil {
 		return nil, fmt.Errorf("%w: hasher is nil", ErrInvalidManifestConfig)
 	}
-	if config.MaxManifestSize <= len(manifestDomain)+18 || config.MaxNameBytes <= 0 || config.MaxChunks <= 0 || config.MaxPageSize <= 0 {
+	if config.MaxManifestSize <= len(manifestDomain)+manifestFieldsSize || config.MaxNameBytes <= 0 || config.MaxChunks <= 0 || config.MaxPageSize <= 0 {
 		return nil, fmt.Errorf("%w: all limits must be greater than zero", ErrInvalidManifestConfig)
 	}
 	return &ManifestStore{storage: store, hasher: defaultHasher, config: config}, nil
 }
 
-func getKey(valueCID cid.CID) []byte {
+func manifestKey(valueCID cid.CID) []byte {
 	return append(append([]byte(nil), manifestPrefix...), valueCID.Bytes()...)
 }
 
@@ -84,7 +91,7 @@ func (s *ManifestStore) Put(ctx context.Context, manifest FileManifest) (cid.CID
 		return cid.CID{}, err
 	}
 	valueCID := s.hasher.Hash(data)
-	if _, err := s.storage.PutIfNotExists(ctx, getKey(valueCID), data); err != nil {
+	if _, err := s.storage.PutIfNotExists(ctx, manifestKey(valueCID), data); err != nil {
 		if errors.Is(err, storage.ErrContentMismatch) {
 			return cid.CID{}, fmt.Errorf("%w: %w", ErrCorruptedManifest, err)
 		}
@@ -97,7 +104,7 @@ func (s *ManifestStore) Get(ctx context.Context, valueCID cid.CID) (FileManifest
 	if !valueCID.IsValid() {
 		return FileManifest{}, fmt.Errorf("%w: invalid CID", ErrInvalidManifest)
 	}
-	data, err := s.storage.Get(ctx, getKey(valueCID))
+	data, err := s.storage.Get(ctx, manifestKey(valueCID))
 	if err != nil {
 		return FileManifest{}, err
 	}
@@ -108,19 +115,13 @@ func (s *ManifestStore) Delete(ctx context.Context, valueCID cid.CID) error {
 	if !valueCID.IsValid() {
 		return fmt.Errorf("%w: invalid CID", ErrInvalidManifest)
 	}
-	return s.storage.Delete(ctx, getKey(valueCID))
+	return s.storage.Delete(ctx, manifestKey(valueCID))
 }
 
 func (s *ManifestStore) ListManifests(ctx context.Context, after *cid.CID, limit int) ([]StoredManifest, *cid.CID, error) {
-	if limit <= 0 || limit > s.config.MaxPageSize {
-		return nil, nil, fmt.Errorf("%w: page size must be between 1 and %d", ErrInvalidManifest, s.config.MaxPageSize)
-	}
-	var afterKey []byte
-	if after != nil {
-		if !after.IsValid() {
-			return nil, nil, fmt.Errorf("%w: invalid cursor CID", ErrInvalidManifest)
-		}
-		afterKey = getKey(*after)
+	afterKey, err := s.pageStartKey(after, limit)
+	if err != nil {
+		return nil, nil, err
 	}
 	objects, nextKey, err := s.storage.ListPage(ctx, manifestPrefix, afterKey, limit)
 	if err != nil {
@@ -138,26 +139,17 @@ func (s *ManifestStore) ListManifests(ctx context.Context, after *cid.CID, limit
 		}
 		manifests = append(manifests, StoredManifest{CID: valueCID, Manifest: manifest})
 	}
-	if len(nextKey) == 0 {
-		return manifests, nil, nil
-	}
-	next, err := cidFromKey(nextKey)
+	next, err := manifestCursor(nextKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	return manifests, &next, nil
+	return manifests, next, nil
 }
 
 func (s *ManifestStore) ListManifestCIDs(ctx context.Context, after *cid.CID, limit int) ([]cid.CID, *cid.CID, error) {
-	if limit <= 0 || limit > s.config.MaxPageSize {
-		return nil, nil, fmt.Errorf("%w: page size must be between 1 and %d", ErrInvalidManifest, s.config.MaxPageSize)
-	}
-	var afterKey []byte
-	if after != nil {
-		if !after.IsValid() {
-			return nil, nil, fmt.Errorf("%w: invalid cursor CID", ErrInvalidManifest)
-		}
-		afterKey = getKey(*after)
+	afterKey, err := s.pageStartKey(after, limit)
+	if err != nil {
+		return nil, nil, err
 	}
 	keys, nextKey, err := s.storage.ListKeysPage(ctx, manifestPrefix, afterKey, limit)
 	if err != nil {
@@ -171,16 +163,39 @@ func (s *ManifestStore) ListManifestCIDs(ctx context.Context, after *cid.CID, li
 		}
 		manifestCIDs = append(manifestCIDs, manifestCID)
 	}
-	if len(nextKey) == 0 {
-		return manifestCIDs, nil, nil
-	}
-	next, err := cidFromKey(nextKey)
+	next, err := manifestCursor(nextKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	return manifestCIDs, &next, nil
+	return manifestCIDs, next, nil
 }
 
+func (s *ManifestStore) pageStartKey(after *cid.CID, limit int) ([]byte, error) {
+	if limit <= 0 || limit > s.config.MaxPageSize {
+		return nil, fmt.Errorf("%w: page size must be between 1 and %d", ErrInvalidManifest, s.config.MaxPageSize)
+	}
+	if after == nil {
+		return nil, nil
+	}
+	if !after.IsValid() {
+		return nil, fmt.Errorf("%w: invalid cursor CID", ErrInvalidManifest)
+	}
+	return manifestKey(*after), nil
+}
+
+func manifestCursor(key []byte) (*cid.CID, error) {
+	if len(key) == 0 {
+		return nil, nil
+	}
+	valueCID, err := cidFromKey(key)
+	if err != nil {
+		return nil, err
+	}
+	return &valueCID, nil
+}
+
+// decodeVerified checks the hash using the CID's algorithm before parsing any
+// fields, independently of the hasher configured for new writes.
 func (s *ManifestStore) decodeVerified(valueCID cid.CID, data []byte) (FileManifest, error) {
 	verifier, err := hasher.ForAlgorithm(valueCID.Algorithm())
 	if err != nil {
@@ -205,11 +220,7 @@ func (s *ManifestStore) encode(manifest FileManifest) ([]byte, error) {
 		return nil, fmt.Errorf("%w: field count overflow", ErrInvalidManifest)
 	}
 
-	baseSize := int64(len(manifestDomain)) +
-		2 + // uint16 version
-		4 + int64(len(manifest.Name)) + // uint32 name length
-		8 + // uint64 reconstructed file size
-		4 // uint32 chunk count
+	baseSize := int64(len(manifestDomain)) + manifestFieldsSize + int64(len(manifest.Name))
 
 	if int64(len(manifest.Chunks)) >
 		(math.MaxInt64-baseSize)/chunkReferenceEncodedSize {
@@ -232,35 +243,33 @@ func (s *ManifestStore) encode(manifest FileManifest) ([]byte, error) {
 	offset := copy(data, manifestDomain)
 
 	binary.BigEndian.PutUint16(data[offset:], manifest.Version)
-	offset += 2
+	offset += manifestVersionSize
 
 	binary.BigEndian.PutUint32(data[offset:], uint32(len(manifest.Name)))
-	offset += 4
+	offset += manifestNameLengthSize
 
 	offset += copy(data[offset:], manifest.Name)
 
 	binary.BigEndian.PutUint64(data[offset:], uint64(manifest.Size))
-	offset += 8
+	offset += manifestSizeFieldSize
 
 	binary.BigEndian.PutUint32(data[offset:], uint32(len(manifest.Chunks)))
-	offset += 4
+	offset += manifestChunkCountSize
 
 	for _, chunk := range manifest.Chunks {
 		offset += copy(data[offset:], chunk.CID.Bytes())
 
 		binary.BigEndian.PutUint64(data[offset:], uint64(chunk.Size))
-		offset += 8
+		offset += manifestSizeFieldSize
 	}
 
 	return data, nil
 }
 
+// decode validates the canonical layout and exact reference count before
+// allocating chunks. Read validity is structural, not bounded by write limits.
 func (s *ManifestStore) decode(data []byte) (FileManifest, error) {
-	minimum := len(manifestDomain) +
-		2 + // uint16 version
-		4 + // uint32 name length
-		8 + // uint64 reconstructed file size
-		4 // uint32 chunk count
+	minimum := len(manifestDomain) + manifestFieldsSize
 
 	if len(data) < minimum {
 		return FileManifest{}, fmt.Errorf("%w: encoded size %d", ErrInvalidManifest, len(data))
@@ -270,12 +279,12 @@ func (s *ManifestStore) decode(data []byte) (FileManifest, error) {
 	}
 	offset := len(manifestDomain)
 	version := binary.BigEndian.Uint16(data[offset:])
-	offset += 2
+	offset += manifestVersionSize
 	if version != CurrentVersion {
 		return FileManifest{}, fmt.Errorf("%w: %d", ErrUnsupportedVersion, version)
 	}
 	nameLength := uint64(binary.BigEndian.Uint32(data[offset:]))
-	offset += 4
+	offset += manifestNameLengthSize
 	if nameLength == 0 || nameLength > uint64(len(data)-offset) {
 		return FileManifest{}, fmt.Errorf("%w: invalid name length %d", ErrInvalidManifest, nameLength)
 	}
@@ -285,29 +294,29 @@ func (s *ManifestStore) decode(data []byte) (FileManifest, error) {
 		return FileManifest{}, fmt.Errorf("%w: name is not valid UTF-8", ErrInvalidManifest)
 	}
 	offset = nameEnd
-	if len(data)-offset < 12 {
+	if len(data)-offset < manifestTrailerSize {
 		return FileManifest{}, fmt.Errorf("%w: truncated size or chunk count", ErrInvalidManifest)
 	}
 	size := binary.BigEndian.Uint64(data[offset:])
-	offset += 8
+	offset += manifestSizeFieldSize
 	if size > math.MaxInt64 {
 		return FileManifest{}, fmt.Errorf("%w: file size overflows int64", ErrInvalidManifest)
 	}
 	chunkCount := uint64(binary.BigEndian.Uint32(data[offset:]))
-	offset += 4
+	offset += manifestChunkCountSize
 	referencesSize := chunkCount * uint64(chunkReferenceEncodedSize)
 	if referencesSize != uint64(len(data)-offset) {
 		return FileManifest{}, fmt.Errorf("%w: encoded length mismatch", ErrInvalidManifest)
 	}
 	chunks := make([]ChunkReference, int(chunkCount))
 	for index := range chunks {
-		chunkCID, err := cid.ParseCIDBytes(data[offset : offset+34])
+		chunkCID, err := cid.ParseCIDBytes(data[offset : offset+manifestCIDSize])
 		if err != nil {
 			return FileManifest{}, fmt.Errorf("%w: chunk %d: %w", ErrInvalidManifest, index, err)
 		}
-		offset += 34
+		offset += manifestCIDSize
 		chunkSize := binary.BigEndian.Uint64(data[offset:])
-		offset += 8
+		offset += manifestSizeFieldSize
 		chunks[index] = ChunkReference{CID: chunkCID, Size: chunkSize}
 	}
 	manifest := FileManifest{Version: version, Name: string(nameBytes), Size: int64(size), Chunks: chunks}
@@ -365,7 +374,7 @@ func validateDecoded(manifest FileManifest) error {
 }
 
 func cidFromKey(key []byte) (cid.CID, error) {
-	if len(key) != len(manifestPrefix)+34 || string(key[:len(manifestPrefix)]) != string(manifestPrefix) {
+	if len(key) != len(manifestPrefix)+manifestCIDSize || string(key[:len(manifestPrefix)]) != string(manifestPrefix) {
 		return cid.CID{}, fmt.Errorf("%w: invalid storage key", ErrCorruptedManifest)
 	}
 	valueCID, err := cid.ParseCIDBytes(key[len(manifestPrefix):])

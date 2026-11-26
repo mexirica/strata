@@ -32,6 +32,13 @@ concrete implementations together. Initialization creates immutable metadata
 only for an empty repository; reopening uses its persisted chunking policy.
 There is no global service locator or second metadata database.
 
+Within the CLI, command registration and repository lifetime stay in `root.go`;
+`init.go`, `files.go`, and `maintenance.go` group their respective operations.
+File retrieval separates pipe lifetime from verified chunk reconstruction.
+Maintenance separates complete reachability marking from sweeping, and page
+traversal from inspection of a single manifest. These are internal boundaries,
+not additional packages or public APIs.
+
 ## Package Responsibilities
 
 | Package | Responsibility |

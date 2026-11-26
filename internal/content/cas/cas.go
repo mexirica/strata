@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 
 	"github.com/mexirica/strata/internal/content/cid"
 	"github.com/mexirica/strata/internal/content/hasher"
@@ -20,7 +19,10 @@ var (
 	ErrObjectTooLarge = errors.New("object exceeds maximum size")
 )
 
-const maxMaintenancePageSize = 10000
+const (
+	maxMaintenancePageSize = 10000
+	chunkCIDSize           = 34
+)
 
 var chunkPrefix = []byte("chunk:")
 
@@ -34,8 +36,8 @@ type CAS struct {
 	config  Config
 }
 
-func getKey(cid cid.CID) []byte {
-	return append(append([]byte(nil), chunkPrefix...), cid.Bytes()...)
+func chunkKey(chunkCID cid.CID) []byte {
+	return append(append([]byte(nil), chunkPrefix...), chunkCID.Bytes()...)
 }
 
 func NewCAS(store storage.ObjectStorage, defaultHasher hasher.Hasher, config Config) (*CAS, error) {
@@ -65,7 +67,7 @@ func (c *CAS) Put(ctx context.Context, data []byte) (cid.CID, error) {
 	}
 
 	chunkCID := c.hasher.Hash(data)
-	key := getKey(chunkCID)
+	key := chunkKey(chunkCID)
 
 	if _, err := c.storage.PutIfNotExists(ctx, key, data); err != nil {
 		if errors.Is(err, storage.ErrContentMismatch) {
@@ -78,24 +80,24 @@ func (c *CAS) Put(ctx context.Context, data []byte) (cid.CID, error) {
 }
 
 // Get retrieves data for a given CID and verifies its cryptographic integrity against bit-rot.
-func (c *CAS) Get(ctx context.Context, cid cid.CID) ([]byte, error) {
+func (c *CAS) Get(ctx context.Context, chunkCID cid.CID) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if !cid.IsValid() {
+	if !chunkCID.IsValid() {
 		return nil, ErrInvalidCID
 	}
 
-	data, err := c.storage.Get(ctx, getKey(cid))
+	data, err := c.storage.Get(ctx, chunkKey(chunkCID))
 	if err != nil {
 		return nil, err
 	}
 
-	verifier, err := hasher.ForAlgorithm(cid.Algorithm())
+	verifier, err := hasher.ForAlgorithm(chunkCID.Algorithm())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidCID, err)
 	}
-	if verifier.Hash(data) != cid {
+	if verifier.Hash(data) != chunkCID {
 		return nil, ErrCorruptedChunk
 	}
 
@@ -111,7 +113,7 @@ func (c *CAS) ListChunks(ctx context.Context, after *cid.CID, limit int) ([]cid.
 		if !after.IsValid() {
 			return nil, nil, ErrInvalidCID
 		}
-		afterKey = getKey(*after)
+		afterKey = chunkKey(*after)
 	}
 	keys, nextKey, err := c.storage.ListKeysPage(ctx, chunkPrefix, afterKey, limit)
 	if err != nil {
@@ -139,7 +141,7 @@ func (c *CAS) Delete(ctx context.Context, valueCID cid.CID) error {
 	if !valueCID.IsValid() {
 		return ErrInvalidCID
 	}
-	return c.storage.Delete(ctx, getKey(valueCID))
+	return c.storage.Delete(ctx, chunkKey(valueCID))
 }
 
 func (c *CAS) Verify(ctx context.Context, valueCID cid.CID) error {
@@ -148,7 +150,7 @@ func (c *CAS) Verify(ctx context.Context, valueCID cid.CID) error {
 }
 
 func cidFromKey(key []byte) (cid.CID, error) {
-	if len(key) != len(chunkPrefix)+34 || string(key[:len(chunkPrefix)]) != string(chunkPrefix) {
+	if len(key) != len(chunkPrefix)+chunkCIDSize || string(key[:len(chunkPrefix)]) != string(chunkPrefix) {
 		return cid.CID{}, fmt.Errorf("%w: invalid chunk storage key", ErrCorruptedChunk)
 	}
 	valueCID, err := cid.ParseCIDBytes(key[len(chunkPrefix):])
@@ -156,16 +158,4 @@ func cidFromKey(key []byte) (cid.CID, error) {
 		return cid.CID{}, fmt.Errorf("%w: %w", ErrCorruptedChunk, err)
 	}
 	return valueCID, nil
-}
-
-type contextReader struct {
-	ctx    context.Context
-	reader io.Reader
-}
-
-func (r *contextReader) Read(p []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return r.reader.Read(p)
 }

@@ -1,3 +1,4 @@
+// Package cid encodes and parses self-describing content identifiers.
 package cid
 
 import (
@@ -14,8 +15,11 @@ var (
 type Algorithm uint8
 
 const (
-	AlgSHA256 Algorithm = 0x12 // SHA2-256 (multihash code 0x12)
-	AlgBlake3 Algorithm = 0x1e // BLAKE3 (multihash code 0x1e)
+	AlgSHA256      Algorithm = 0x12 // SHA2-256 (multihash code 0x12)
+	AlgBlake3      Algorithm = 0x1e // BLAKE3 (multihash code 0x1e)
+	digestSize               = 32
+	cidHeaderSize            = 2
+	encodedCIDSize           = cidHeaderSize + digestSize
 )
 
 func (a Algorithm) String() string {
@@ -36,10 +40,10 @@ func (a Algorithm) IsValid() bool {
 // CID represents a self-describing Content Identifier carrying the hash algorithm and digest.
 type CID struct {
 	alg    Algorithm
-	digest [32]byte
+	digest [digestSize]byte
 }
 
-func NewCID(alg Algorithm, digest [32]byte) (CID, error) {
+func NewCID(alg Algorithm, digest [digestSize]byte) (CID, error) {
 	if !alg.IsValid() {
 		return CID{}, fmt.Errorf("%w: 0x%x", ErrUnsupportedAlgorithm, uint8(alg))
 	}
@@ -50,7 +54,7 @@ func (c CID) Algorithm() Algorithm {
 	return c.alg
 }
 
-func (c CID) Digest() [32]byte {
+func (c CID) Digest() [digestSize]byte {
 	return c.digest
 }
 
@@ -64,10 +68,10 @@ func (c CID) Bytes() []byte {
 	if !c.IsValid() {
 		return nil
 	}
-	buf := make([]byte, 34)
+	buf := make([]byte, encodedCIDSize)
 	buf[0] = byte(c.alg)
-	buf[1] = 32
-	copy(buf[2:], c.digest[:])
+	buf[1] = digestSize
+	copy(buf[cidHeaderSize:], c.digest[:])
 	return buf
 }
 
@@ -90,8 +94,8 @@ func ParseCID(s string) (CID, error) {
 
 // ParseCIDBytes parses binary multihash bytes into a CID.
 func ParseCIDBytes(b []byte) (CID, error) {
-	if len(b) != 34 {
-		return CID{}, fmt.Errorf("invalid CID byte length: got %d, want 34", len(b))
+	if len(b) != encodedCIDSize {
+		return CID{}, fmt.Errorf("invalid CID byte length: got %d, want %d", len(b), encodedCIDSize)
 	}
 
 	alg := Algorithm(b[0])
@@ -100,12 +104,12 @@ func ParseCIDBytes(b []byte) (CID, error) {
 	}
 
 	length := int(b[1])
-	if length != 32 {
-		return CID{}, fmt.Errorf("invalid digest length: got %d, want 32", length)
+	if length != digestSize {
+		return CID{}, fmt.Errorf("invalid digest length: got %d, want %d", length, digestSize)
 	}
 
-	var digest [32]byte
-	copy(digest[:], b[2:34])
+	var digest [digestSize]byte
+	copy(digest[:], b[cidHeaderSize:encodedCIDSize])
 
 	return NewCID(alg, digest)
 }
