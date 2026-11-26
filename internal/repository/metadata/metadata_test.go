@@ -91,26 +91,25 @@ func TestStore_CreateDoesNotOverwriteMetadata(t *testing.T) {
 	}
 }
 
-func TestStore_LoadRejectsUnsupportedVersion(t *testing.T) {
-	store, db := newStore(t)
-	ctx := context.Background()
-	if err := db.Put(ctx, []byte("repository:metadata"), []byte(`{"format_version":2}`)); err != nil {
-		t.Fatalf("seed metadata: %v", err)
+func TestStore_LoadRejectsInvalidMetadata(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    string
+		wantErr error
+	}{
+		{name: "unsupported version", data: `{"format_version":2}`, wantErr: metadata.ErrUnsupportedRepositoryVersion},
+		{name: "corrupted JSON", data: "{", wantErr: metadata.ErrCorruptedRepositoryMetadata},
 	}
-
-	if _, err := store.Load(ctx); !errors.Is(err, metadata.ErrUnsupportedRepositoryVersion) {
-		t.Fatalf("Load returned %v, want ErrUnsupportedRepositoryVersion", err)
-	}
-}
-
-func TestStore_LoadRejectsCorruptedMetadata(t *testing.T) {
-	store, db := newStore(t)
-	ctx := context.Background()
-	if err := db.Put(ctx, []byte("repository:metadata"), []byte("{")); err != nil {
-		t.Fatalf("seed metadata: %v", err)
-	}
-
-	if _, err := store.Load(ctx); !errors.Is(err, metadata.ErrCorruptedRepositoryMetadata) {
-		t.Fatalf("Load returned %v, want ErrCorruptedRepositoryMetadata", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store, db := newStore(t)
+			ctx := context.Background()
+			if err := db.Put(ctx, []byte("repository:metadata"), []byte(tc.data)); err != nil {
+				t.Fatalf("seed metadata: %v", err)
+			}
+			if _, err := store.Load(ctx); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Load returned %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }

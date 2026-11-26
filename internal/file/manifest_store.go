@@ -14,7 +14,10 @@ import (
 	"github.com/mexirica/strata/internal/storage"
 )
 
-const CurrentVersion uint16 = 1
+const (
+	CurrentVersion            uint16 = 1
+	chunkReferenceEncodedSize int64  = 42
+)
 
 var (
 	ErrInvalidManifestConfig = errors.New("invalid manifest store config")
@@ -45,7 +48,12 @@ type FileManifest struct {
 	Version uint16
 	Name    string
 	Size    int64
-	Chunks  []cid.CID
+	Chunks  []ChunkReference
+}
+
+type ChunkReference struct {
+	CID  cid.CID
+	Size uint64
 }
 
 type StoredManifest struct {
@@ -184,33 +192,76 @@ func (s *ManifestStore) decodeVerified(valueCID cid.CID, data []byte) (FileManif
 	return s.decode(data)
 }
 
+// encode validates the manifest and serializes it using the canonical manifest
+// v1 binary layout: domain, version, name, file size, chunk count, and ordered
+// CID-and-size chunk references. It rejects field and encoded-size overflows
+// before allocating the output buffer.
 func (s *ManifestStore) encode(manifest FileManifest) ([]byte, error) {
 	if err := s.validateForWrite(manifest); err != nil {
 		return nil, err
 	}
-	total := int64(len(manifestDomain)) + 2 + 4 + int64(len(manifest.Name)) + 8 + 4 + int64(len(manifest.Chunks))*34
-	if total > int64(s.config.MaxManifestSize) {
-		return nil, fmt.Errorf("%w: encoded size %d exceeds %d", ErrInvalidManifest, total, s.config.MaxManifestSize)
+	if uint64(len(manifest.Name)) > math.MaxUint32 ||
+		uint64(len(manifest.Chunks)) > math.MaxUint32 {
+		return nil, fmt.Errorf("%w: field count overflow", ErrInvalidManifest)
 	}
+
+	baseSize := int64(len(manifestDomain)) +
+		2 + // uint16 version
+		4 + int64(len(manifest.Name)) + // uint32 name length
+		8 + // uint64 reconstructed file size
+		4 // uint32 chunk count
+
+	if int64(len(manifest.Chunks)) >
+		(math.MaxInt64-baseSize)/chunkReferenceEncodedSize {
+		return nil, fmt.Errorf("%w: encoded size overflow", ErrInvalidManifest)
+	}
+
+	total := baseSize +
+		int64(len(manifest.Chunks))*chunkReferenceEncodedSize
+
+	if total > int64(s.config.MaxManifestSize) {
+		return nil, fmt.Errorf(
+			"%w: encoded size %d exceeds %d",
+			ErrInvalidManifest,
+			total,
+			s.config.MaxManifestSize,
+		)
+	}
+
 	data := make([]byte, int(total))
 	offset := copy(data, manifestDomain)
+
 	binary.BigEndian.PutUint16(data[offset:], manifest.Version)
 	offset += 2
+
 	binary.BigEndian.PutUint32(data[offset:], uint32(len(manifest.Name)))
 	offset += 4
+
 	offset += copy(data[offset:], manifest.Name)
+
 	binary.BigEndian.PutUint64(data[offset:], uint64(manifest.Size))
 	offset += 8
+
 	binary.BigEndian.PutUint32(data[offset:], uint32(len(manifest.Chunks)))
 	offset += 4
-	for _, chunkCID := range manifest.Chunks {
-		offset += copy(data[offset:], chunkCID.Bytes())
+
+	for _, chunk := range manifest.Chunks {
+		offset += copy(data[offset:], chunk.CID.Bytes())
+
+		binary.BigEndian.PutUint64(data[offset:], uint64(chunk.Size))
+		offset += 8
 	}
+
 	return data, nil
 }
 
 func (s *ManifestStore) decode(data []byte) (FileManifest, error) {
-	minimum := len(manifestDomain) + 2 + 4 + 8 + 4
+	minimum := len(manifestDomain) +
+		2 + // uint16 version
+		4 + // uint32 name length
+		8 + // uint64 reconstructed file size
+		4 // uint32 chunk count
+
 	if len(data) < minimum {
 		return FileManifest{}, fmt.Errorf("%w: encoded size %d", ErrInvalidManifest, len(data))
 	}
@@ -244,18 +295,20 @@ func (s *ManifestStore) decode(data []byte) (FileManifest, error) {
 	}
 	chunkCount := uint64(binary.BigEndian.Uint32(data[offset:]))
 	offset += 4
-	expected := uint64(offset) + chunkCount*34
-	if expected != uint64(len(data)) {
+	referencesSize := chunkCount * uint64(chunkReferenceEncodedSize)
+	if referencesSize != uint64(len(data)-offset) {
 		return FileManifest{}, fmt.Errorf("%w: encoded length mismatch", ErrInvalidManifest)
 	}
-	chunks := make([]cid.CID, int(chunkCount))
+	chunks := make([]ChunkReference, int(chunkCount))
 	for index := range chunks {
 		chunkCID, err := cid.ParseCIDBytes(data[offset : offset+34])
 		if err != nil {
 			return FileManifest{}, fmt.Errorf("%w: chunk %d: %w", ErrInvalidManifest, index, err)
 		}
-		chunks[index] = chunkCID
 		offset += 34
+		chunkSize := binary.BigEndian.Uint64(data[offset:])
+		offset += 8
+		chunks[index] = ChunkReference{CID: chunkCID, Size: chunkSize}
 	}
 	manifest := FileManifest{Version: version, Name: string(nameBytes), Size: int64(size), Chunks: chunks}
 	if err := validateDecoded(manifest); err != nil {
@@ -287,13 +340,26 @@ func validateDecoded(manifest FileManifest) error {
 	if manifest.Size < 0 {
 		return fmt.Errorf("%w: negative file size", ErrInvalidManifest)
 	}
-	if manifest.Size > 0 && len(manifest.Chunks) == 0 {
-		return fmt.Errorf("%w: non-empty file has no chunks", ErrInvalidManifest)
-	}
-	for index, chunkCID := range manifest.Chunks {
-		if !chunkCID.IsValid() {
+	var reconstructedSize uint64
+	for index, chunk := range manifest.Chunks {
+		if !chunk.CID.IsValid() {
 			return fmt.Errorf("%w: chunk %d has invalid CID", ErrInvalidManifest, index)
 		}
+		if chunk.Size == 0 {
+			return fmt.Errorf("%w: chunk %d has zero size", ErrInvalidManifest, index)
+		}
+		if chunk.Size > uint64(math.MaxInt64)-reconstructedSize {
+			return fmt.Errorf("%w: reconstructed file size overflows int64", ErrInvalidManifest)
+		}
+		reconstructedSize += chunk.Size
+	}
+	if reconstructedSize != uint64(manifest.Size) {
+		return fmt.Errorf(
+			"%w: file size %d does not match chunks total %d",
+			ErrInvalidManifest,
+			manifest.Size,
+			reconstructedSize,
+		)
 	}
 	return nil
 }

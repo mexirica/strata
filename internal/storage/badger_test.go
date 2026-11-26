@@ -60,16 +60,31 @@ func TestBadger_PutIfNotExists_Concurrent(t *testing.T) {
 	}
 }
 
-func TestBadger_GetNotFound(t *testing.T) {
-	db, err := storage.NewInMemoryBadger()
-	if err != nil {
-		t.Fatalf("failed to open in-memory badger: %v", err)
+func TestBadger_GetErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		closed  bool
+		wantErr error
+	}{
+		{name: "missing key", wantErr: storage.ErrNotFound},
+		{name: "closed storage", closed: true, wantErr: storage.ErrClosed},
 	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	_, err = db.Get(context.Background(), []byte("missing"))
-	if !errors.Is(err, storage.ErrNotFound) {
-		t.Fatalf("expected ErrNotFound, got %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := storage.NewInMemoryBadger()
+			if err != nil {
+				t.Fatalf("failed to open in-memory badger: %v", err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			if tc.closed {
+				if err := db.Close(); err != nil {
+					t.Fatalf("Close failed: %v", err)
+				}
+			}
+			if _, err := db.Get(context.Background(), []byte("missing")); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Get returned %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
@@ -87,21 +102,6 @@ func TestBadger_PutIfNotExistsRejectsDifferentContent(t *testing.T) {
 	inserted, err := db.PutIfNotExists(ctx, []byte("key"), []byte("second"))
 	if inserted || !errors.Is(err, storage.ErrContentMismatch) {
 		t.Fatalf("expected non-inserted ErrContentMismatch, got inserted=%v err=%v", inserted, err)
-	}
-}
-
-func TestBadger_OperationsAfterClose(t *testing.T) {
-	db, err := storage.NewInMemoryBadger()
-	if err != nil {
-		t.Fatalf("failed to open in-memory badger: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
-	}
-
-	_, err = db.Get(context.Background(), []byte("key"))
-	if !errors.Is(err, storage.ErrClosed) {
-		t.Fatalf("expected ErrClosed, got %v", err)
 	}
 }
 
