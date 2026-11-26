@@ -127,7 +127,7 @@ func open(ctx context.Context, config Config, candidate *metadata.Metadata) (*No
 	if err != nil {
 		return closeOnError(fmt.Errorf("create CAS: %w", err))
 	}
-	maxManifestSize := 34 + config.MaxNameBytes + 34*config.MaxChunks
+	maxManifestSize := 34 + config.MaxNameBytes + 42*config.MaxChunks
 	manifestStore, err := manifeststore.NewManifestStore(db, contentHasher, manifeststore.Config{
 		MaxManifestSize: maxManifestSize,
 		MaxNameBytes:    config.MaxNameBytes,
