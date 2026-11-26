@@ -7,25 +7,29 @@ thin adapter; storage policy and integrity checks live below it.
 
 ```mermaid
 flowchart TD
-    CLI[cmd/cli + internal/cli] --> Node[internal/node]
-    Node --> FileService[internal/fileservice]
+    CLI[cmd/cli + internal/cli] --> Node[internal/repository]
+    Node --> FileService[internal/file.FileService]
+    Node --> Metadata[internal/repository/metadata]
     Node --> Maintenance[internal/maintenance]
-    FileService --> Chunker[internal/chunker]
-    FileService --> CAS[internal/cas]
-    FileService --> Manifests[internal/manifeststore]
+    FileService --> Chunker[internal/content/chunker]
+    FileService --> CAS[internal/content/cas]
+    FileService --> Manifests[internal/file.ManifestStore]
     Maintenance --> CAS
     Maintenance --> Manifests
-    CAS --> Hasher[internal/hasher]
+    CAS --> Hasher[internal/content/hasher]
     Manifests --> Hasher
-    Hasher --> CID[internal/cid]
+    Hasher --> CID[internal/content/cid]
     CAS --> Storage[internal/storage]
     Manifests --> Storage
+    Metadata --> Storage
     Storage --> Badger[(BadgerDB)]
 ```
 
 Dependencies point from orchestration toward storage primitives. The
-composition root is [`node.New`](../../internal/node/node.go), which validates
-configuration, opens Badger, and wires concrete implementations together.
+composition roots are [`repository.Init` and `repository.Open`](../../internal/repository/node.go),
+which validate configuration, open Badger, validate persisted metadata, and wire
+concrete implementations together. Initialization creates immutable metadata
+only for an empty repository; reopening uses its persisted chunking policy.
 There is no global service locator or second metadata database.
 
 ## Package Responsibilities
@@ -34,41 +38,60 @@ There is no global service locator or second metadata database.
 | --- | --- |
 | [`cmd/cli`](../../cmd/cli) | CLI executable entrypoint |
 | [`internal/cli`](../../internal/cli) | Cobra commands, Viper configuration, and local file I/O |
-| [`internal/node`](../../internal/node) | Public facade, dependency composition, lifecycle, and operation locking |
-| [`internal/fileservice`](../../internal/fileservice) | File validation, chunk orchestration, manifest creation, and reconstruction |
-| [`internal/chunker`](../../internal/chunker) | Streaming FastCDC splitting with bounded buffers |
-| [`internal/cas`](../../internal/cas) | Hash-addressed chunk writes and verified reads |
-| [`internal/manifeststore`](../../internal/manifeststore) | Canonical manifest encoding, verification, CRUD, and pagination |
+| [`internal/repository`](../../internal/repository) | Public facade, dependency composition, lifecycle, and operation locking |
+| [`internal/repository/metadata`](../../internal/repository/metadata) | Immutable repository format and chunking policy, initialization, and compatibility validation |
+| [`internal/file`](../../internal/file) | File validation, chunk orchestration, reconstruction, canonical manifest encoding, verification, CRUD, and pagination |
+| [`internal/content/chunker`](../../internal/content/chunker) | Streaming FastCDC splitting with bounded buffers |
+| [`internal/content/cas`](../../internal/content/cas) | Hash-addressed chunk writes and verified reads |
 | [`internal/maintenance`](../../internal/maintenance) | Mark-and-sweep collection and integrity inspection |
-| [`internal/cid`](../../internal/cid) | Self-describing binary and textual content identifiers |
-| [`internal/hasher`](../../internal/hasher) | BLAKE3 and SHA-256 implementations selected by CID algorithm |
+| [`internal/content/cid`](../../internal/content/cid) | Self-describing binary and textual content identifiers |
+| [`internal/content/hasher`](../../internal/content/hasher) | BLAKE3 and SHA-256 implementations selected by CID algorithm |
 | [`internal/storage`](../../internal/storage) | Backend contract and BadgerDB adapter |
 
 ## Ownership Boundaries
 
-`storage.ObjectStore` owns byte persistence but does not understand chunks or
-manifests. `cas.Store` owns chunk identity. `manifeststore.Store` owns manifest
-identity and serialization. `fileservice.FileService` coordinates both stores
+`storage.ObjectStorage` owns byte persistence but does not understand chunks or
+manifests. `cas.CAS` owns chunk identity. `file.ManifestStore` owns manifest
+identity and serialization. `file.FileService` coordinates both stores
 without depending on Badger directly.
 
-`node.Node` is the concurrency boundary. Calling lower-level services directly
+`repository.Node` is the concurrency boundary. Calling lower-level services directly
 bypasses its repository-wide coordination and is intended only for focused
 tests or future composition work.
 
 ## Repository Model
 
-A repository contains two logical object classes in one Badger database:
+A repository contains immutable metadata and two content-addressed object
+classes in one Badger database:
 
 ```text
-manifest CID -> encoded manifest -> ordered chunk CIDs
-                                      |      |      |
-                                      v      v      v
-                                  chunk bytes in CAS
+manifest CID -> encoded manifest -> ordered [CID, size] references
+                                             |      |      |
+                                             v      v      v
+                                         chunk bytes in CAS
 ```
 
 Identical chunks share one storage entry. Manifests are independent roots and
 may share any number of chunks. Removing a manifest changes reachability but
 does not mutate the shared chunks; garbage collection performs reclamation.
+
+Manifest v1 persists a 34-byte CID and an unsigned 64-bit big-endian size per
+reference, in file order. Chunk offsets are derived cumulatively, not stored.
+Reads and writes validate positive reference sizes, overflow, and equality of
+their sum with the declared reconstructed file size. Empty files have zero
+size and no references. See [Storage Format](storage-format.md) for the exact
+layout and executable golden and malformed vectors.
+
+Store records each chunk's actual length. Sequential retrieval verifies each
+chunk's hash and declared length before streaming its bytes. Scrub verifies
+manifests and chunks page by page, reporting individual reference-size and total
+file-size mismatches separately. GC validates every manifest during marking
+before beginning its key-only chunk sweep; it does not reconstruct files or
+check chunk contents to determine reachability.
+
+This is a direct change to manifest v1. Development repositories containing
+pre-change CID-only manifests are unsupported; there is no v2 reader,
+migration, or compatibility mode.
 
 ## Executable Layout
 

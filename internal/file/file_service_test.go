@@ -113,15 +113,23 @@ func TestFileService_StoreAndRetrieve_Roundtrip(t *testing.T) {
 }
 
 func TestFileService_StoreRejectsLimits(t *testing.T) {
-	fs, _ := setupFileService(t)
-	ctx := context.Background()
-
-	if _, err := fs.Store(ctx, "", bytes.NewReader(nil)); !errors.Is(err, file.ErrInvalidName) {
-		t.Fatalf("expected ErrInvalidName, got %v", err)
+	tests := []struct {
+		name        string
+		fileName    string
+		payloadSize int
+		wantErr     error
+	}{
+		{name: "empty name", fileName: "", wantErr: file.ErrInvalidName},
+		{name: "file too large", fileName: "large.bin", payloadSize: 3 * 1024 * 1024, wantErr: file.ErrFileTooLarge},
 	}
-	tooLarge := bytes.NewReader(make([]byte, 3*1024*1024))
-	if _, err := fs.Store(ctx, "large.bin", tooLarge); !errors.Is(err, file.ErrFileTooLarge) {
-		t.Fatalf("expected ErrFileTooLarge, got %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fs, _ := setupFileService(t)
+			reader := bytes.NewReader(make([]byte, tc.payloadSize))
+			if _, err := fs.Store(context.Background(), tc.fileName, reader); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Store returned %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
@@ -149,5 +157,70 @@ func TestFileService_Retrieve_EarlyClose(t *testing.T) {
 
 	if err := rc.Close(); err != nil {
 		t.Fatalf("close failed: %v", err)
+	}
+}
+
+func TestFileService_RetrieveValidatesChunkSizesBeforeWriting(t *testing.T) {
+	tests := []struct {
+		name          string
+		mismatchIndex int
+		smallerSize   bool
+		wantErr       error
+	}{
+		{name: "correct sizes", mismatchIndex: -1},
+		{name: "first chunk mismatch", mismatchIndex: 0, wantErr: file.ErrChunkSizeMismatch},
+		{name: "first reference smaller than chunk", mismatchIndex: 0, smallerSize: true, wantErr: file.ErrChunkSizeMismatch},
+		{name: "later chunk mismatch", mismatchIndex: 1, wantErr: file.ErrChunkSizeMismatch},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fs, manifests := setupFileService(t)
+			ctx := context.Background()
+			payload := bytes.Repeat([]byte("x"), 768*1024)
+			manifestCID, err := fs.Store(ctx, "multichunk.bin", bytes.NewReader(payload))
+			if err != nil {
+				t.Fatalf("Store: %v", err)
+			}
+			manifest, err := manifests.Get(ctx, manifestCID)
+			if err != nil {
+				t.Fatalf("Get manifest: %v", err)
+			}
+			if len(manifest.Chunks) < 3 {
+				t.Fatalf("expected at least three chunks, got %d", len(manifest.Chunks))
+			}
+			wantBytes := len(payload)
+			if tc.mismatchIndex >= 0 {
+				wantBytes = 0
+				for _, reference := range manifest.Chunks[:tc.mismatchIndex] {
+					wantBytes += int(reference.Size)
+				}
+				if manifest.Chunks[tc.mismatchIndex+1].Size <= 1 {
+					t.Fatal("compensating chunk must have more than one byte")
+				}
+				if tc.smallerSize {
+					manifest.Chunks[tc.mismatchIndex].Size--
+					manifest.Chunks[tc.mismatchIndex+1].Size++
+				} else {
+					manifest.Chunks[tc.mismatchIndex].Size++
+					manifest.Chunks[tc.mismatchIndex+1].Size--
+				}
+				manifestCID, err = manifests.Put(ctx, manifest)
+				if err != nil {
+					t.Fatalf("Put mismatched references with correct total: %v", err)
+				}
+			}
+			reader, _, err := fs.Retrieve(ctx, manifestCID)
+			if err != nil {
+				t.Fatalf("Retrieve: %v", err)
+			}
+			defer reader.Close()
+			got, err := io.ReadAll(reader)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("ReadAll returned %v, want %v", err, tc.wantErr)
+			}
+			if !bytes.Equal(got, payload[:wantBytes]) {
+				t.Fatalf("read %d bytes, want exactly %d validated bytes", len(got), wantBytes)
+			}
+		})
 	}
 }

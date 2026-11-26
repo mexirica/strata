@@ -70,16 +70,21 @@ func TestCDC_DefaultConfig(t *testing.T) {
 }
 
 func TestCDC_RejectsUnsafeConfig(t *testing.T) {
-	tests := []chunker.Config{
-		{Algorithm: chunker.FastCDC, MinSize: 0, NormalSize: 1024, MaxSize: 4096},
-		{Algorithm: chunker.FastCDC, MinSize: 64, NormalSize: 1000, MaxSize: 4096},
-		{Algorithm: chunker.FastCDC, MinSize: 64, NormalSize: 1024, MaxSize: chunker.MaxSupportedChunkSize + 1},
-		{Algorithm: chunker.FastCDC, MinSize: 1024, NormalSize: 1024, MaxSize: 4096},
+	tests := []struct {
+		name   string
+		config chunker.Config
+	}{
+		{name: "zero minimum", config: chunker.Config{Algorithm: chunker.FastCDC, MinSize: 0, NormalSize: 1024, MaxSize: 4096}},
+		{name: "non-power-of-two target", config: chunker.Config{Algorithm: chunker.FastCDC, MinSize: 64, NormalSize: 1000, MaxSize: 4096}},
+		{name: "maximum exceeds supported size", config: chunker.Config{Algorithm: chunker.FastCDC, MinSize: 64, NormalSize: 1024, MaxSize: chunker.MaxSupportedChunkSize + 1}},
+		{name: "target equals minimum", config: chunker.Config{Algorithm: chunker.FastCDC, MinSize: 1024, NormalSize: 1024, MaxSize: 4096}},
 	}
-	for _, config := range tests {
-		if _, err := chunker.NewCDC(config); !errors.Is(err, chunker.ErrInvalidConfig) {
-			t.Fatalf("expected ErrInvalidConfig for %+v, got %v", config, err)
-		}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := chunker.NewCDC(tc.config); !errors.Is(err, chunker.ErrInvalidConfig) {
+				t.Fatalf("expected ErrInvalidConfig for %+v, got %v", tc.config, err)
+			}
+		})
 	}
 }
 

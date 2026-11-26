@@ -54,17 +54,28 @@ func TestHashers(t *testing.T) {
 }
 
 func TestForAlgorithm(t *testing.T) {
-	for _, algorithm := range []cid.Algorithm{cid.AlgSHA256, cid.AlgBlake3} {
-		h, err := hasher.ForAlgorithm(algorithm)
-		if err != nil {
-			t.Fatalf("ForAlgorithm(%v) failed: %v", algorithm, err)
-		}
-		if h.Algorithm() != algorithm {
-			t.Fatalf("expected %v, got %v", algorithm, h.Algorithm())
-		}
+	tests := []struct {
+		name      string
+		algorithm cid.Algorithm
+		wantErr   error
+	}{
+		{name: "SHA-256", algorithm: cid.AlgSHA256},
+		{name: "BLAKE3", algorithm: cid.AlgBlake3},
+		{name: "unsupported", algorithm: cid.Algorithm(0xff), wantErr: hasher.ErrUnsupportedAlgorithm},
 	}
 
-	if _, err := hasher.ForAlgorithm(cid.Algorithm(0xff)); !errors.Is(err, hasher.ErrUnsupportedAlgorithm) {
-		t.Fatalf("expected ErrUnsupportedAlgorithm, got %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h, err := hasher.ForAlgorithm(tc.algorithm)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("ForAlgorithm returned %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				return
+			}
+			if h.Algorithm() != tc.algorithm {
+				t.Fatalf("expected %v, got %v", tc.algorithm, h.Algorithm())
+			}
+		})
 	}
 }

@@ -51,6 +51,22 @@ binary and coverage profile as artifacts.
 Most storage tests use temporary in-memory Badger instances. Persistence and
 restart scenarios use temporary directories.
 
+## Test Style
+
+Use table-driven tests whenever an operation has multiple input or expected-result
+scenarios. Define a `tests` slice with descriptive case names and run each case
+with `t.Run(tc.name, ...)`, keeping the execution and assertions in the subtest.
+Include expected errors in the table and compare them with `errors.Is`.
+
+Create mutable fixtures inside each subtest so cases remain independent. Only
+share fixtures when cases do not change their state. Keep tables local to their
+test and avoid generic test runners or one-row tables.
+
+Preserve sequential integration tests when later steps depend on earlier ones,
+including lifecycle, persistence, pagination, and concurrency workflows. Keep
+single-scenario tests and fuzz targets in their natural form. Setup, assertion,
+and concurrency loops are not scenario tables.
+
 ## Change Checklists
 
 ### Persisted Formats
