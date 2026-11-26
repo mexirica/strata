@@ -64,8 +64,8 @@ func (s *Scrubber) Run(ctx context.Context) ([]ScrubIssue, error) {
 			}
 
 			var size int64
-			for _, chunkCID := range manifest.Chunks {
-				chunk, err := s.cas.Get(ctx, chunkCID)
+			for _, chunkReference := range manifest.Chunks {
+				chunk, err := s.cas.Get(ctx, chunkReference.CID)
 				if err != nil {
 					kind := IssueCorruptedChunk
 					if errors.Is(err, storage.ErrNotFound) {
@@ -73,7 +73,7 @@ func (s *Scrubber) Run(ctx context.Context) ([]ScrubIssue, error) {
 					} else if !errors.Is(err, cas.ErrCorruptedChunk) {
 						return issues, err
 					}
-					manifestValue, chunkValue := manifestCID, chunkCID
+					manifestValue, chunkValue := manifestCID, chunkReference.CID
 					issues = append(issues, ScrubIssue{Kind: kind, ManifestCID: &manifestValue, ChunkCID: &chunkValue, Err: err})
 					continue
 				}

@@ -48,8 +48,8 @@ func (g *GarbageCollector) Run(ctx context.Context, dryRun bool) (GCReport, erro
 		}
 		for _, stored := range manifests {
 			report.ManifestsScanned++
-			for _, chunkCID := range stored.Manifest.Chunks {
-				referenced[chunkCID] = struct{}{}
+			for _, chunkReference := range stored.Manifest.Chunks {
+				referenced[chunkReference.CID] = struct{}{}
 			}
 		}
 		if next == nil {

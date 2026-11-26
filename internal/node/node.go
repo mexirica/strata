@@ -171,7 +171,7 @@ func validateConfig(config Config) error {
 		return fmt.Errorf("%w: manifest limits exceed encoded representation", ErrInvalidConfig)
 	}
 	maxInt := int(^uint(0) >> 1)
-	if config.MaxChunks > (maxInt-34-config.MaxNameBytes)/34 {
+	if config.MaxChunks > (maxInt-42-config.MaxNameBytes)/42 {
 		return fmt.Errorf("%w: manifest size overflows int", ErrInvalidConfig)
 	}
 	return nil

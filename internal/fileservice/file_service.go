@@ -67,14 +67,14 @@ func (s *FileService) Store(
 	}
 
 	var (
-		cids []cid.CID
-		size int64
+		chunks []manifeststore.ChunkReference
+		size   int64
 	)
 	if err := ctx.Err(); err != nil {
 		return cid.CID{}, err
 	}
 	err := s.chunker.Split(ctx, r, func(chunk []byte) error {
-		if len(cids) == s.config.MaxChunks {
+		if len(chunks) == s.config.MaxChunks {
 			return ErrTooManyChunks
 		}
 		if int64(len(chunk)) > s.config.MaxFileSize-size {
@@ -85,7 +85,7 @@ func (s *FileService) Store(
 			return err
 		}
 
-		cids = append(cids, chunkCID)
+		chunks = append(chunks, manifeststore.ChunkReference{CID: chunkCID, Size: uint64(len(chunk))})
 		size += int64(len(chunk))
 
 		return nil
@@ -98,7 +98,7 @@ func (s *FileService) Store(
 		Version: manifeststore.CurrentVersion,
 		Name:    name,
 		Size:    size,
-		Chunks:  cids,
+		Chunks:  chunks,
 	})
 	if err != nil {
 		return cid.CID{}, err
@@ -127,18 +127,22 @@ func (s *FileService) Retrieve(
 	go func() {
 		defer cancel()
 		var written int64
-		for _, chunkCID := range manifest.Chunks {
+		for _, chunkRef := range manifest.Chunks {
 			if err := streamCtx.Err(); err != nil {
 				_ = pw.CloseWithError(err)
 				return
 			}
 
-			chunk, err := s.cas.Get(streamCtx, chunkCID)
+			chunk, err := s.cas.Get(streamCtx, chunkRef.CID)
 			if err != nil {
 				_ = pw.CloseWithError(err)
 				return
 			}
 			if int64(len(chunk)) > manifest.Size-written {
+				_ = pw.CloseWithError(ErrManifestSizeMismatch)
+				return
+			}
+			if uint64(len(chunk)) != chunkRef.Size {
 				_ = pw.CloseWithError(ErrManifestSizeMismatch)
 				return
 			}
