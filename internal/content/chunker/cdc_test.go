@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/mexirica/strata/internal/chunker"
+	"github.com/mexirica/strata/internal/content/chunker"
 )
 
 func TestCDC_Split_Reconstruction(t *testing.T) {

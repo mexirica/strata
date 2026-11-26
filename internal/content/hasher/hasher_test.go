@@ -5,8 +5,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/mexirica/strata/internal/cid"
-	"github.com/mexirica/strata/internal/hasher"
+	"github.com/mexirica/strata/internal/content/cid"
+	"github.com/mexirica/strata/internal/content/hasher"
 )
 
 func TestHashers(t *testing.T) {

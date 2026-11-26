@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mexirica/strata/internal/chunker"
-	"github.com/mexirica/strata/internal/manifeststore"
+	"github.com/mexirica/strata/internal/content/chunker"
+	"github.com/mexirica/strata/internal/file"
 	"github.com/mexirica/strata/internal/storage"
 )
 
@@ -52,7 +52,7 @@ func NewMetadata(createdAt time.Time, version string, chunking Chunking) Metadat
 		CreatedAt:             createdAt.UTC(),
 		AppVersion:            version,
 		Chunking:              chunking,
-		ManifestFormatVersion: manifeststore.CurrentVersion,
+		ManifestFormatVersion: file.CurrentVersion,
 	}
 }
 
@@ -147,8 +147,8 @@ func validate(metadata Metadata) error {
 	if strings.TrimSpace(metadata.AppVersion) == "" {
 		return fmt.Errorf("%w: creator version must not be empty", ErrInvalidRepositoryMetadata)
 	}
-	if metadata.ManifestFormatVersion != manifeststore.CurrentVersion {
-		return fmt.Errorf("%w: manifest format version must be %d", ErrInvalidRepositoryMetadata, manifeststore.CurrentVersion)
+	if metadata.ManifestFormatVersion != file.CurrentVersion {
+		return fmt.Errorf("%w: manifest format version must be %d", ErrInvalidRepositoryMetadata, file.CurrentVersion)
 	}
 	if _, err := chunker.NewCDC(chunker.Config{
 		Algorithm:  metadata.Chunking.Algorithm,

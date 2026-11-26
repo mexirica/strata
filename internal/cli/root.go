@@ -10,10 +10,10 @@ import (
 	"text/tabwriter"
 
 	"github.com/dustin/go-humanize"
-	"github.com/mexirica/strata/internal/chunker"
-	"github.com/mexirica/strata/internal/cid"
+	"github.com/mexirica/strata/internal/content/chunker"
+	"github.com/mexirica/strata/internal/content/cid"
 	"github.com/mexirica/strata/internal/maintenance"
-	"github.com/mexirica/strata/internal/node"
+	"github.com/mexirica/strata/internal/repository"
 	"github.com/spf13/cobra"
 )
 
@@ -70,7 +70,7 @@ func (a *application) initCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			n, err := node.Init(cmd.Context(), node.InitConfig{
+			n, err := repository.Init(cmd.Context(), repository.InitConfig{
 				Config:   nodeConfig,
 				Chunking: initChunking,
 			})
@@ -101,7 +101,7 @@ func (a *application) addCommand() *cobra.Command {
 				return fmt.Errorf("open input file: %w", err)
 			}
 			defer file.Close()
-			return a.withNode(cmd.Context(), func(n *node.Node) error {
+			return a.withNode(cmd.Context(), func(n *repository.Node) error {
 				manifestCID, err := n.Store(cmd.Context(), filepath.Base(args[0]), file)
 				if err != nil {
 					return fmt.Errorf("add file: %w", err)
@@ -123,7 +123,7 @@ func (a *application) getCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("parse CID: %w", err)
 			}
-			return a.withNode(cmd.Context(), func(n *node.Node) error {
+			return a.withNode(cmd.Context(), func(n *repository.Node) error {
 				reader, _, err := n.Retrieve(cmd.Context(), manifestCID)
 				if err != nil {
 					return fmt.Errorf("retrieve file: %w", err)
@@ -162,7 +162,7 @@ func (a *application) listCommand() *cobra.Command {
 		Short: "List stored files",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return a.withNode(cmd.Context(), func(n *node.Node) error {
+			return a.withNode(cmd.Context(), func(n *repository.Node) error {
 				writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 				fmt.Fprintln(writer, "CID\tSIZE\tNAME")
 				var cursor *cid.CID
@@ -195,7 +195,7 @@ func (a *application) removeCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("parse CID: %w", err)
 			}
-			return a.withNode(cmd.Context(), func(n *node.Node) error {
+			return a.withNode(cmd.Context(), func(n *repository.Node) error {
 				if err := n.Delete(cmd.Context(), manifestCID); err != nil {
 					return fmt.Errorf("remove file: %w", err)
 				}
@@ -213,7 +213,7 @@ func (a *application) gcCommand() *cobra.Command {
 		Short: "Remove unreferenced chunks",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return a.withNode(cmd.Context(), func(n *node.Node) error {
+			return a.withNode(cmd.Context(), func(n *repository.Node) error {
 				report, err := n.RunGC(cmd.Context(), dryRun)
 				if err != nil {
 					return fmt.Errorf("run garbage collection: %w", err)
@@ -234,7 +234,7 @@ func (a *application) scrubCommand() *cobra.Command {
 		Short: "Check repository integrity",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return a.withNode(cmd.Context(), func(n *node.Node) error {
+			return a.withNode(cmd.Context(), func(n *repository.Node) error {
 				issues, err := n.Scrub(cmd.Context())
 				if err != nil {
 					return fmt.Errorf("scrub repository: %w", err)
@@ -266,7 +266,7 @@ func formatScrubIssue(issue maintenance.ScrubIssue) string {
 	return result
 }
 
-func (a *application) withNode(ctx context.Context, operation func(*node.Node) error) error {
+func (a *application) withNode(ctx context.Context, operation func(*repository.Node) error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -278,7 +278,7 @@ func (a *application) withNode(ctx context.Context, operation func(*node.Node) e
 	if err != nil {
 		return err
 	}
-	n, err := node.Open(ctx, nodeConfig)
+	n, err := repository.Open(ctx, nodeConfig)
 	if err != nil {
 		return fmt.Errorf("open repository: %w", err)
 	}

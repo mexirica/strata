@@ -3,7 +3,7 @@ package hasher
 import (
 	"hash"
 
-	"github.com/mexirica/strata/internal/cid"
+	"github.com/mexirica/strata/internal/content/cid"
 	"github.com/zeebo/blake3"
 )
 

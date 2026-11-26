@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/mexirica/strata/internal/buildinfo"
-	"github.com/mexirica/strata/internal/chunker"
-	"github.com/mexirica/strata/internal/metadata"
+	"github.com/mexirica/strata/internal/content/chunker"
+	"github.com/mexirica/strata/internal/repository/metadata"
 	"github.com/mexirica/strata/internal/storage"
 )
 
