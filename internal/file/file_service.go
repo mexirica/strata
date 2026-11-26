@@ -19,6 +19,7 @@ var (
 	ErrNilReader            = errors.New("reader is nil")
 	ErrFileTooLarge         = errors.New("file exceeds maximum size")
 	ErrTooManyChunks        = errors.New("file exceeds maximum chunk count")
+	ErrChunkSizeMismatch    = errors.New("chunk size does not match reference")
 	ErrManifestSizeMismatch = errors.New("manifest size does not match chunks")
 )
 
@@ -66,7 +67,7 @@ func (s *FileService) Store(
 	}
 
 	var (
-		chunks []manifeststore.ChunkReference
+		chunks []ChunkReference
 		size   int64
 	)
 	if err := ctx.Err(); err != nil {
@@ -84,7 +85,7 @@ func (s *FileService) Store(
 			return err
 		}
 
-		chunks = append(chunks, manifeststore.ChunkReference{CID: chunkCID, Size: uint64(len(chunk))})
+		chunks = append(chunks, ChunkReference{CID: chunkCID, Size: uint64(len(chunk))})
 		size += int64(len(chunk))
 
 		return nil
@@ -137,11 +138,11 @@ func (s *FileService) Retrieve(
 				_ = pw.CloseWithError(err)
 				return
 			}
-			if int64(len(chunk)) > manifest.Size-written {
-				_ = pw.CloseWithError(ErrManifestSizeMismatch)
+			if uint64(len(chunk)) != chunkRef.Size {
+				_ = pw.CloseWithError(ErrChunkSizeMismatch)
 				return
 			}
-			if uint64(len(chunk)) != chunkRef.Size {
+			if int64(len(chunk)) > manifest.Size-written {
 				_ = pw.CloseWithError(ErrManifestSizeMismatch)
 				return
 			}

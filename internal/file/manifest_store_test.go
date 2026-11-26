@@ -1,8 +1,13 @@
 package file_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
+	"math"
+	"strings"
 	"testing"
 
 	"github.com/mexirica/strata/internal/content/cid"
@@ -51,7 +56,7 @@ func TestManifestStore_CRUD(t *testing.T) {
 		Version: file.CurrentVersion,
 		Name:    "test.pdf",
 		Size:    1024,
-		Chunks:  []cid.CID{cid1, cid2},
+		Chunks:  []file.ChunkReference{{CID: cid1, Size: 256}, {CID: cid2, Size: 768}},
 	}
 
 	manifestCID, err := store.Put(ctx, manifest)
@@ -88,6 +93,150 @@ func TestManifestStore_CRUD(t *testing.T) {
 	}
 	if _, err := store.Get(ctx, manifestCID); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestManifestStore_CanonicalChunkReferences(t *testing.T) {
+	store, raw := setupManifestStore(t)
+	ctx := context.Background()
+	golden, err := hex.DecodeString(
+		"7374726174612d6d616e696665737400" +
+			"000100000008746573742e706466000000000000040000000002" +
+			"1e2001" + strings.Repeat("00", 31) + "0000000000000100" +
+			"1e2002" + strings.Repeat("00", 31) + "0000000000000300",
+	)
+	if err != nil {
+		t.Fatalf("decode golden bytes: %v", err)
+	}
+	h := hasher.NewBlake3Hasher()
+	manifestCID := h.Hash(golden)
+	key := append([]byte("manifest:"), manifestCID.Bytes()...)
+	if err := raw.Put(ctx, key, golden); err != nil {
+		t.Fatalf("store golden bytes: %v", err)
+	}
+	manifest, err := store.Get(ctx, manifestCID)
+	if err != nil {
+		t.Fatalf("decode golden manifest: %v", err)
+	}
+	if manifest.Name != "test.pdf" || manifest.Size != 1024 || len(manifest.Chunks) != 2 ||
+		manifest.Chunks[0].Size != 256 || manifest.Chunks[1].Size != 768 {
+		t.Fatalf("unexpected golden manifest: %+v", manifest)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := store.Delete(ctx, manifestCID); err != nil {
+			t.Fatalf("delete before re-encoding: %v", err)
+		}
+		encodedCID, err := store.Put(ctx, manifest)
+		if err != nil {
+			t.Fatalf("re-encode manifest: %v", err)
+		}
+		encoded, err := raw.Get(ctx, append([]byte("manifest:"), encodedCID.Bytes()...))
+		if err != nil {
+			t.Fatalf("read encoded bytes: %v", err)
+		}
+		if encodedCID != manifestCID || !bytes.Equal(encoded, golden) {
+			t.Fatalf("encoding %d does not match canonical CID-and-size layout: %x", attempt, encoded)
+		}
+	}
+}
+
+func TestManifestStore_RejectsInvalidChunkReferences(t *testing.T) {
+	store, _ := setupManifestStore(t)
+	chunkCID := hasher.NewBlake3Hasher().Hash([]byte("chunk"))
+	for _, test := range []struct {
+		name   string
+		size   int64
+		chunks []file.ChunkReference
+	}{
+		{"invalid CID", 1, []file.ChunkReference{{Size: 1}}},
+		{"zero size", 0, []file.ChunkReference{{CID: chunkCID}}},
+		{"chunk size overflow", 1, []file.ChunkReference{{CID: chunkCID, Size: math.MaxUint64}}},
+		{"cumulative overflow", math.MaxInt64, []file.ChunkReference{{CID: chunkCID, Size: math.MaxInt64}, {CID: chunkCID, Size: 1}}},
+		{"size mismatch", 6, []file.ChunkReference{{CID: chunkCID, Size: 5}}},
+		{"missing references", 1, nil},
+		{"negative file size", -1, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := store.Put(context.Background(), file.FileManifest{
+				Version: file.CurrentVersion,
+				Name:    "invalid.bin",
+				Size:    test.size,
+				Chunks:  test.chunks,
+			})
+			if !errors.Is(err, file.ErrInvalidManifest) {
+				t.Fatalf("Put returned %v, want ErrInvalidManifest", err)
+			}
+		})
+	}
+}
+
+func TestManifestStore_RejectsMalformedEncodedReferences(t *testing.T) {
+	store, raw := setupManifestStore(t)
+	ctx := context.Background()
+	h := hasher.NewBlake3Hasher()
+	chunkCID := h.Hash([]byte("chunk"))
+	manifest := file.FileManifest{
+		Version: file.CurrentVersion,
+		Name:    "data",
+		Size:    10,
+		Chunks:  []file.ChunkReference{{CID: chunkCID, Size: 4}, {CID: chunkCID, Size: 6}},
+	}
+	manifestCID, err := store.Put(ctx, manifest)
+	if err != nil {
+		t.Fatalf("Put seed manifest: %v", err)
+	}
+	valid, err := raw.Get(ctx, append([]byte("manifest:"), manifestCID.Bytes()...))
+	if err != nil {
+		t.Fatalf("read seed bytes: %v", err)
+	}
+	fileSizeOffset := 22 + len(manifest.Name)
+	countOffset := fileSizeOffset + 8
+	referenceOffset := countOffset + 4
+	for _, test := range []struct {
+		name   string
+		mutate func([]byte) []byte
+	}{
+		{"invalid CID", func(data []byte) []byte { data[referenceOffset] = 0; return data }},
+		{"zero size", func(data []byte) []byte {
+			binary.BigEndian.PutUint64(data[referenceOffset+34:], 0)
+			return data
+		}},
+		{"chunk size overflow", func(data []byte) []byte {
+			binary.BigEndian.PutUint64(data[referenceOffset+34:], math.MaxUint64)
+			return data
+		}},
+		{"cumulative overflow", func(data []byte) []byte {
+			binary.BigEndian.PutUint64(data[fileSizeOffset:], math.MaxInt64)
+			binary.BigEndian.PutUint64(data[referenceOffset+34:], math.MaxInt64)
+			binary.BigEndian.PutUint64(data[referenceOffset+42+34:], 1)
+			return data
+		}},
+		{"file size overflow", func(data []byte) []byte {
+			binary.BigEndian.PutUint64(data[fileSizeOffset:], uint64(math.MaxInt64)+1)
+			return data
+		}},
+		{"size mismatch", func(data []byte) []byte {
+			binary.BigEndian.PutUint64(data[referenceOffset+34:], 5)
+			return data
+		}},
+		{"invalid count", func(data []byte) []byte {
+			binary.BigEndian.PutUint32(data[countOffset:], math.MaxUint32)
+			return data
+		}},
+		{"truncated CID", func(data []byte) []byte { return data[:referenceOffset+33] }},
+		{"truncated size", func(data []byte) []byte { return data[:len(data)-1] }},
+		{"trailing bytes", func(data []byte) []byte { return append(data, 0) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			data := test.mutate(bytes.Clone(valid))
+			valueCID := h.Hash(data)
+			if err := raw.Put(ctx, append([]byte("manifest:"), valueCID.Bytes()...), data); err != nil {
+				t.Fatalf("store malformed bytes: %v", err)
+			}
+			if _, err := store.Get(ctx, valueCID); !errors.Is(err, file.ErrInvalidManifest) {
+				t.Fatalf("Get returned %v, want ErrInvalidManifest", err)
+			}
+		})
 	}
 }
 
@@ -132,7 +281,7 @@ func TestManifestStore_ReadIgnoresCurrentWriteLimits(t *testing.T) {
 		Version: file.CurrentVersion,
 		Name:    "existing-long-name.bin",
 		Size:    10,
-		Chunks:  []cid.CID{chunkCID, chunkCID},
+		Chunks:  []file.ChunkReference{{CID: chunkCID, Size: 5}, {CID: chunkCID, Size: 5}},
 	}
 	manifestCID, err := writer.Put(context.Background(), manifest)
 	if err != nil {

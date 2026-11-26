@@ -82,16 +82,21 @@ func TestCID_RejectsInvalidConstructionAndZeroValue(t *testing.T) {
 }
 
 func TestCID_Invalid(t *testing.T) {
-	cases := []string{
-		"",
-		"invalid-hex",
-		"1e20", // too short
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "empty", input: ""},
+		{name: "invalid hex", input: "invalid-hex"},
+		{name: "too short", input: "1e20"},
 	}
 
-	for _, tc := range cases {
-		if _, err := cid.ParseCID(tc); err == nil {
-			t.Errorf("expected error for input %q, got nil", tc)
-		}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := cid.ParseCID(tc.input); err == nil {
+				t.Errorf("expected error for input %q, got nil", tc.input)
+			}
+		})
 	}
 }
 

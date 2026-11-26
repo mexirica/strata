@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -270,6 +271,155 @@ func TestNode_StoreRetrieveDeleteGCAndScrub(t *testing.T) {
 	report, err := n.RunGC(ctx, false)
 	if err != nil || report.ChunksDeleted != dryReport.ChunksDeleted {
 		t.Fatalf("GC report mismatch: dry=%+v actual=%+v err=%v", dryReport, report, err)
+	}
+}
+
+func TestNode_ReopenPreservesEmptyAndMultichunkFiles(t *testing.T) {
+	ctx := context.Background()
+	dataDir := filepath.Join(t.TempDir(), "data")
+	n, err := repository.Init(ctx, validInitConfig(dataDir))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	t.Cleanup(func() { _ = n.Close() })
+	files := []struct {
+		name string
+		data []byte
+		cid  cid.CID
+	}{
+		{name: "empty.bin"},
+		{name: "multichunk.bin", data: bytes.Repeat([]byte("strata"), 80)},
+	}
+	for index := range files {
+		files[index].cid, err = n.Store(ctx, files[index].name, bytes.NewReader(files[index].data))
+		if err != nil {
+			t.Fatalf("Store %s: %v", files[index].name, err)
+		}
+	}
+	baselineList, next, err := n.List(ctx, nil, len(files))
+	if err != nil || next != nil || len(baselineList) != len(files) {
+		t.Fatalf("initial List: count=%d next=%v err=%v", len(baselineList), next, err)
+	}
+	uniqueChunks := make(map[cid.CID]struct{})
+	for _, stored := range baselineList {
+		for _, reference := range stored.Manifest.Chunks {
+			uniqueChunks[reference.CID] = struct{}{}
+		}
+	}
+	baselineGC, err := n.RunGC(ctx, true)
+	if err != nil {
+		t.Fatalf("initial dry-run GC: %v", err)
+	}
+	if baselineGC.ManifestsScanned != len(files) || baselineGC.ChunksReferenced != len(uniqueChunks) || baselineGC.ChunksScanned != len(uniqueChunks) || baselineGC.ChunksDeleted != 0 {
+		t.Fatalf("unexpected initial GC report: %+v", baselineGC)
+	}
+	phases := []struct {
+		name   string
+		reopen bool
+	}{
+		{name: "before reopen"},
+		{name: "after reopen", reopen: true},
+	}
+	for _, phase := range phases {
+		t.Run(phase.name, func(t *testing.T) {
+			if phase.reopen {
+				if err := n.Close(); err != nil {
+					t.Fatalf("Close before reopen: %v", err)
+				}
+				reopened, err := repository.Open(ctx, validConfig(dataDir))
+				if err != nil {
+					t.Fatalf("Open persisted repository: %v", err)
+				}
+				n = reopened
+			}
+			for _, stored := range files {
+				t.Run(stored.name, func(t *testing.T) {
+					reader, manifest, err := n.Retrieve(ctx, stored.cid)
+					if err != nil {
+						t.Fatalf("Retrieve: %v", err)
+					}
+					got, readErr := io.ReadAll(reader)
+					closeErr := reader.Close()
+					if readErr != nil || closeErr != nil {
+						t.Fatalf("read=%v close=%v", readErr, closeErr)
+					}
+					if !bytes.Equal(got, stored.data) || manifest.Name != stored.name || manifest.Size != int64(len(stored.data)) {
+						t.Fatalf("retrieved file changed: data=%q manifest=%+v", got, manifest)
+					}
+					if len(stored.data) == 0 && len(manifest.Chunks) != 0 {
+						t.Fatalf("empty file has %d references", len(manifest.Chunks))
+					}
+					if len(stored.data) > 0 && len(manifest.Chunks) < 2 {
+						t.Fatalf("expected multichunk file, got %d references", len(manifest.Chunks))
+					}
+					var total uint64
+					for _, reference := range manifest.Chunks {
+						if reference.Size == 0 {
+							t.Fatal("zero-sized reference")
+						}
+						total += reference.Size
+					}
+					if total != uint64(len(stored.data)) {
+						t.Fatalf("reference sum is %d, want %d", total, len(stored.data))
+					}
+					storedAgain, err := n.Store(ctx, stored.name, bytes.NewReader(stored.data))
+					if err != nil || storedAgain != stored.cid {
+						t.Fatalf("Store changed CID: got=%s want=%s err=%v", storedAgain, stored.cid, err)
+					}
+				})
+			}
+			listed, next, err := n.List(ctx, nil, len(files))
+			if err != nil || next != nil || !reflect.DeepEqual(listed, baselineList) {
+				t.Fatalf("List changed ordered references: got=%+v want=%+v next=%v err=%v", listed, baselineList, next, err)
+			}
+			issues, err := n.Scrub(ctx)
+			if err != nil || len(issues) != 0 {
+				t.Fatalf("scrub: issues=%+v err=%v", issues, err)
+			}
+			for _, mode := range []struct {
+				name   string
+				dryRun bool
+			}{{name: "dry run", dryRun: true}, {name: "real sweep"}} {
+				t.Run(mode.name, func(t *testing.T) {
+					report, err := n.RunGC(ctx, mode.dryRun)
+					if err != nil || report != baselineGC {
+						t.Fatalf("GC changed: got=%+v want=%+v err=%v", report, baselineGC, err)
+					}
+				})
+			}
+		})
+	}
+	for _, stored := range files {
+		if err := n.Delete(ctx, stored.cid); err != nil {
+			t.Fatalf("Delete %s after reopen: %v", stored.name, err)
+		}
+		reader, _, err := n.Retrieve(ctx, stored.cid)
+		if reader != nil {
+			_ = reader.Close()
+		}
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("Retrieve deleted %s: got %v, want ErrNotFound", stored.name, err)
+		}
+	}
+	listed, next, err := n.List(ctx, nil, len(files))
+	if err != nil || next != nil || len(listed) != 0 {
+		t.Fatalf("List after delete: count=%d next=%v err=%v", len(listed), next, err)
+	}
+	dryReport, err := n.RunGC(ctx, true)
+	if err != nil || dryReport.ManifestsScanned != 0 || dryReport.ChunksReferenced != 0 || dryReport.ChunksScanned != len(uniqueChunks) || dryReport.ChunksDeleted != len(uniqueChunks) {
+		t.Fatalf("GC after delete: report=%+v err=%v", dryReport, err)
+	}
+	report, err := n.RunGC(ctx, false)
+	if err != nil || report != dryReport {
+		t.Fatalf("GC sweep: dry=%+v actual=%+v err=%v", dryReport, report, err)
+	}
+	report, err = n.RunGC(ctx, false)
+	if err != nil || report.ManifestsScanned != 0 || report.ChunksScanned != 0 || report.ChunksDeleted != 0 {
+		t.Fatalf("GC did not remove all orphan chunks: report=%+v err=%v", report, err)
+	}
+	issues, err := n.Scrub(ctx)
+	if err != nil || len(issues) != 0 {
+		t.Fatalf("scrub after sweep: issues=%+v err=%v", issues, err)
 	}
 }
 

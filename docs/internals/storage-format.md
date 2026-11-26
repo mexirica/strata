@@ -70,6 +70,13 @@ exactly equal the declared file size. Empty files have no chunks.
 Truncated references, invalid CIDs, encoded-length mismatches, zero-sized
 chunks, arithmetic overflow, and reconstructed-size mismatches are rejected.
 
+Sequential retrieval verifies each chunk's hash and actual length before writing
+its bytes to the output stream. An individual reference-size mismatch returns
+`file.ErrChunkSizeMismatch` while reading the stream; reconstructed-total
+mismatches use `file.ErrManifestSizeMismatch`. Scrub reports individual mismatches
+as `IssueChunkSizeMismatch`, with both manifest and chunk CIDs and an error wrapping
+`file.ErrChunkSizeMismatch`. Total mismatches remain `IssueManifestSizeMismatch`.
+
 Configured name-length, chunk-count, and encoded-manifest-size limits apply
 only to writes. Existing manifests are decoded using structural validation,
 independently of current write limits.

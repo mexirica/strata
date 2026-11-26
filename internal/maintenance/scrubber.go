@@ -18,6 +18,7 @@ const (
 	IssueMissingChunk
 	IssueCorruptedChunk
 	IssueManifestSizeMismatch
+	IssueChunkSizeMismatch
 )
 
 type ScrubIssue struct {
@@ -76,6 +77,20 @@ func (s *Scrubber) Run(ctx context.Context) ([]ScrubIssue, error) {
 					manifestValue, chunkValue := manifestCID, chunkReference.CID
 					issues = append(issues, ScrubIssue{Kind: kind, ManifestCID: &manifestValue, ChunkCID: &chunkValue, Err: err})
 					continue
+				}
+				if uint64(len(chunk)) != chunkReference.Size {
+					manifestValue, chunkValue := manifestCID, chunkReference.CID
+					issues = append(issues, ScrubIssue{
+						Kind:        IssueChunkSizeMismatch,
+						ManifestCID: &manifestValue,
+						ChunkCID:    &chunkValue,
+						Err: fmt.Errorf(
+							"%w: chunk size is %d, reference declares %d",
+							file.ErrChunkSizeMismatch,
+							len(chunk),
+							chunkReference.Size,
+						),
+					})
 				}
 				size += int64(len(chunk))
 			}
