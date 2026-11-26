@@ -211,8 +211,6 @@ func (s *ManifestStore) decodeVerified(valueCID cid.CID, data []byte) (FileManif
 // v1 binary layout: domain, version, name, file size, chunk count, and ordered
 // CID-and-size chunk references. It rejects field and encoded-size overflows
 // before allocating the output buffer.
-// encode checks write limits and integer bounds before allocating the canonical
-// domain-prefixed layout. References retain their order and declared sizes.
 func (s *ManifestStore) encode(manifest FileManifest) ([]byte, error) {
 	if err := s.validateForWrite(manifest); err != nil {
 		return nil, err
