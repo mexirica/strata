@@ -1,24 +1,24 @@
-package manifeststore_test
+package file_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 
-	"github.com/mexirica/strata/internal/cid"
-	"github.com/mexirica/strata/internal/hasher"
-	"github.com/mexirica/strata/internal/manifeststore"
+	"github.com/mexirica/strata/internal/content/cid"
+	"github.com/mexirica/strata/internal/content/hasher"
+	"github.com/mexirica/strata/internal/file"
 	"github.com/mexirica/strata/internal/storage"
 )
 
-func setupManifestStore(t testing.TB) (*manifeststore.ManifestStore, storage.ObjectStorage) {
+func setupManifestStore(t testing.TB) (*file.ManifestStore, storage.ObjectStorage) {
 	t.Helper()
 	db, err := storage.NewInMemoryBadger()
 	if err != nil {
 		t.Fatalf("failed to init in-memory badger: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	store, err := manifeststore.NewManifestStore(db, hasher.NewBlake3Hasher(), manifeststore.Config{
+	store, err := file.NewManifestStore(db, hasher.NewBlake3Hasher(), file.ManifestConfig{
 		MaxManifestSize: 1024 * 1024,
 		MaxNameBytes:    1024,
 		MaxChunks:       1024,
@@ -47,8 +47,8 @@ func TestManifestStore_CRUD(t *testing.T) {
 		t.Fatalf("NewCID failed: %v", err)
 	}
 
-	manifest := manifeststore.FileManifest{
-		Version: manifeststore.CurrentVersion,
+	manifest := file.FileManifest{
+		Version: file.CurrentVersion,
 		Name:    "test.pdf",
 		Size:    1024,
 		Chunks:  []cid.CID{cid1, cid2},
@@ -93,7 +93,7 @@ func TestManifestStore_CRUD(t *testing.T) {
 
 func TestManifestStore_ContentAddressedIdentity(t *testing.T) {
 	store, _ := setupManifestStore(t)
-	manifest := manifeststore.FileManifest{Version: manifeststore.CurrentVersion, Name: "a.txt", Size: 0}
+	manifest := file.FileManifest{Version: file.CurrentVersion, Name: "a.txt", Size: 0}
 	first, err := store.Put(context.Background(), manifest)
 	if err != nil {
 		t.Fatalf("Put failed: %v", err)
@@ -118,7 +118,7 @@ func TestManifestStore_ReadIgnoresCurrentWriteLimits(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	h := hasher.NewBlake3Hasher()
-	writer, err := manifeststore.NewManifestStore(db, h, manifeststore.Config{
+	writer, err := file.NewManifestStore(db, h, file.ManifestConfig{
 		MaxManifestSize: 1024,
 		MaxNameBytes:    128,
 		MaxChunks:       8,
@@ -128,8 +128,8 @@ func TestManifestStore_ReadIgnoresCurrentWriteLimits(t *testing.T) {
 		t.Fatalf("NewManifestStore writer: %v", err)
 	}
 	chunkCID := h.Hash([]byte("chunk"))
-	manifest := manifeststore.FileManifest{
-		Version: manifeststore.CurrentVersion,
+	manifest := file.FileManifest{
+		Version: file.CurrentVersion,
 		Name:    "existing-long-name.bin",
 		Size:    10,
 		Chunks:  []cid.CID{chunkCID, chunkCID},
@@ -139,7 +139,7 @@ func TestManifestStore_ReadIgnoresCurrentWriteLimits(t *testing.T) {
 		t.Fatalf("Put existing manifest: %v", err)
 	}
 
-	reader, err := manifeststore.NewManifestStore(db, h, manifeststore.Config{
+	reader, err := file.NewManifestStore(db, h, file.ManifestConfig{
 		MaxManifestSize: len("strata-manifest\x00") + 19,
 		MaxNameBytes:    4,
 		MaxChunks:       1,
@@ -155,7 +155,7 @@ func TestManifestStore_ReadIgnoresCurrentWriteLimits(t *testing.T) {
 	if got.Name != manifest.Name || len(got.Chunks) != len(manifest.Chunks) {
 		t.Fatalf("Get returned %+v, want %+v", got, manifest)
 	}
-	if _, err := reader.Put(context.Background(), manifest); !errors.Is(err, manifeststore.ErrInvalidManifest) {
+	if _, err := reader.Put(context.Background(), manifest); !errors.Is(err, file.ErrInvalidManifest) {
 		t.Fatalf("Put over current write limits returned %v, want ErrInvalidManifest", err)
 	}
 }
@@ -164,7 +164,7 @@ func TestManifestStore_Pagination(t *testing.T) {
 	store, _ := setupManifestStore(t)
 	ctx := context.Background()
 	for _, name := range []string{"one", "two", "three"} {
-		if _, err := store.Put(ctx, manifeststore.FileManifest{Version: manifeststore.CurrentVersion, Name: name}); err != nil {
+		if _, err := store.Put(ctx, file.FileManifest{Version: file.CurrentVersion, Name: name}); err != nil {
 			t.Fatalf("Put(%s) failed: %v", name, err)
 		}
 	}
@@ -187,7 +187,7 @@ func TestManifestStore_Pagination(t *testing.T) {
 func TestManifestStore_DetectsCorruption(t *testing.T) {
 	store, raw := setupManifestStore(t)
 	ctx := context.Background()
-	valueCID, err := store.Put(ctx, manifeststore.FileManifest{Version: manifeststore.CurrentVersion, Name: "data"})
+	valueCID, err := store.Put(ctx, file.FileManifest{Version: file.CurrentVersion, Name: "data"})
 	if err != nil {
 		t.Fatalf("Put failed: %v", err)
 	}
@@ -195,15 +195,15 @@ func TestManifestStore_DetectsCorruption(t *testing.T) {
 	if err := raw.Put(ctx, key, []byte("tampered")); err != nil {
 		t.Fatalf("tamper failed: %v", err)
 	}
-	if _, err := store.Get(ctx, valueCID); !errors.Is(err, manifeststore.ErrCorruptedManifest) {
+	if _, err := store.Get(ctx, valueCID); !errors.Is(err, file.ErrCorruptedManifest) {
 		t.Fatalf("expected ErrCorruptedManifest, got %v", err)
 	}
 }
 
 func FuzzManifestDecode(f *testing.F) {
 	store, raw := setupManifestStore(f)
-	manifestCID, err := store.Put(context.Background(), manifeststore.FileManifest{
-		Version: manifeststore.CurrentVersion,
+	manifestCID, err := store.Put(context.Background(), file.FileManifest{
+		Version: file.CurrentVersion,
 		Name:    "seed",
 	})
 	if err != nil {
@@ -228,7 +228,7 @@ func FuzzManifestDecode(f *testing.F) {
 			t.Fatalf("raw Put failed: %v", err)
 		}
 		manifest, err := store.Get(context.Background(), valueCID)
-		if err == nil && manifest.Version != manifeststore.CurrentVersion {
+		if err == nil && manifest.Version != file.CurrentVersion {
 			t.Fatalf("decoded unsupported version %d", manifest.Version)
 		}
 	})

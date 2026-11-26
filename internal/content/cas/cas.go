@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mexirica/strata/internal/cid"
-	"github.com/mexirica/strata/internal/hasher"
+	"github.com/mexirica/strata/internal/content/cid"
+	"github.com/mexirica/strata/internal/content/hasher"
 	"github.com/mexirica/strata/internal/storage"
 )
 

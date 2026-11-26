@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mexirica/strata/internal/cid"
+	"github.com/mexirica/strata/internal/content/cid"
 )
 
 func TestCID_Roundtrip(t *testing.T) {

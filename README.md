@@ -54,6 +54,17 @@ Each manifest records the original name, byte size, and ordered chunk CIDs.
 The CID printed by `strata add` identifies that manifest and is the handle used
 by `get` and `remove`.
 
+## Project Structure
+
+The internal packages are grouped around the main concepts and responsibilities:
+
+- `internal/content` - CIDs, hashing, chunking, and content-addressed chunk storage.
+- `internal/file` - file operations and manifest encoding/storage.
+- `internal/repository` - repository lifecycle, configuration, and persisted metadata.
+- `internal/maintenance` - garbage collection and integrity checks.
+- `internal/storage` - persistent object storage implementation.
+- `internal/cli` - command-line interface and configuration loading.
+
 ## Installation
 
 ### APT (Debian/Ubuntu)

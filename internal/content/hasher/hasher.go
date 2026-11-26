@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"hash"
 
-	"github.com/mexirica/strata/internal/cid"
+	"github.com/mexirica/strata/internal/content/cid"
 )
 
 var ErrUnsupportedAlgorithm = errors.New("unsupported hash algorithm")

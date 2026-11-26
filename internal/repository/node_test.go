@@ -1,4 +1,4 @@
-package node_test
+package repository_test
 
 import (
 	"bytes"
@@ -12,15 +12,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mexirica/strata/internal/chunker"
-	"github.com/mexirica/strata/internal/cid"
-	"github.com/mexirica/strata/internal/metadata"
-	"github.com/mexirica/strata/internal/node"
+	"github.com/mexirica/strata/internal/content/chunker"
+	"github.com/mexirica/strata/internal/content/cid"
+	"github.com/mexirica/strata/internal/repository"
+	"github.com/mexirica/strata/internal/repository/metadata"
 	"github.com/mexirica/strata/internal/storage"
 )
 
-func validConfig(dataDir string) node.Config {
-	return node.Config{
+func validConfig(dataDir string) repository.Config {
+	return repository.Config{
 		DataDir:       dataDir,
 		HashAlgorithm: cid.AlgBlake3,
 		MaxFileSize:   512,
@@ -29,8 +29,8 @@ func validConfig(dataDir string) node.Config {
 	}
 }
 
-func validInitConfig(dataDir string) node.InitConfig {
-	return node.InitConfig{
+func validInitConfig(dataDir string) repository.InitConfig {
+	return repository.InitConfig{
 		Config: validConfig(dataDir),
 		Chunking: chunker.Config{
 			Algorithm:  chunker.FastCDC,
@@ -45,7 +45,7 @@ func TestNew_RejectsIncompatibleConfigBeforeOpeningStorage(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "must-not-exist")
 	config := validConfig(dataDir)
 	config.MaxChunks = 0
-	if _, err := node.Open(context.Background(), config); !errors.Is(err, node.ErrInvalidConfig) {
+	if _, err := repository.Open(context.Background(), config); !errors.Is(err, repository.ErrInvalidConfig) {
 		t.Fatalf("Open returned %v, want ErrInvalidConfig", err)
 	}
 	if _, err := os.Stat(dataDir); !errors.Is(err, os.ErrNotExist) {
@@ -67,7 +67,7 @@ func TestNew_RejectsLegacyRepositoryAndClosesStorage(t *testing.T) {
 		t.Fatalf("close seeded storage: %v", err)
 	}
 
-	if _, err := node.Init(ctx, validInitConfig(dataDir)); !errors.Is(err, metadata.ErrLegacyRepository) {
+	if _, err := repository.Init(ctx, validInitConfig(dataDir)); !errors.Is(err, metadata.ErrLegacyRepository) {
 		t.Fatalf("Init returned %v, want ErrLegacyRepository", err)
 	}
 
@@ -83,7 +83,7 @@ func TestNew_RejectsLegacyRepositoryAndClosesStorage(t *testing.T) {
 func TestInitRejectsIncompatiblePersistedChunking(t *testing.T) {
 	ctx := context.Background()
 	dataDir := filepath.Join(t.TempDir(), "data")
-	n, err := node.Init(ctx, validInitConfig(dataDir))
+	n, err := repository.Init(ctx, validInitConfig(dataDir))
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestInitRejectsIncompatiblePersistedChunking(t *testing.T) {
 	changed := validInitConfig(dataDir)
 	changed.Chunking.NormalSize = 256
 	changed.Chunking.MaxSize = 512
-	_, err = node.Init(ctx, changed)
+	_, err = repository.Init(ctx, changed)
 	if !errors.Is(err, metadata.ErrIncompatibleRepository) {
 		t.Fatalf("Init returned %v, want ErrIncompatibleRepository", err)
 	}
@@ -112,7 +112,7 @@ func TestRepeatedInitReportsChunkingMismatchBeforeRequestedWriteLimits(t *testin
 	initial.Chunking.MaxSize = 2048
 	initial.MaxChunks = 1
 	initial.MaxFileSize = 512
-	n, err := node.Init(ctx, initial)
+	n, err := repository.Init(ctx, initial)
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -123,11 +123,11 @@ func TestRepeatedInitReportsChunkingMismatchBeforeRequestedWriteLimits(t *testin
 	repeated := validInitConfig(dataDir)
 	repeated.MaxChunks = 1
 	repeated.MaxFileSize = 512
-	_, err = node.Init(ctx, repeated)
+	_, err = repository.Init(ctx, repeated)
 	if !errors.Is(err, metadata.ErrIncompatibleRepository) {
 		t.Fatalf("repeated Init returned %v, want ErrIncompatibleRepository", err)
 	}
-	if errors.Is(err, node.ErrInvalidConfig) {
+	if errors.Is(err, repository.ErrInvalidConfig) {
 		t.Fatalf("repeated Init masked chunking mismatch with invalid config: %v", err)
 	}
 }
@@ -135,7 +135,7 @@ func TestRepeatedInitReportsChunkingMismatchBeforeRequestedWriteLimits(t *testin
 func TestOpenUsesPersistedChunkingAndReadsOldCIDAlgorithm(t *testing.T) {
 	ctx := context.Background()
 	dataDir := filepath.Join(t.TempDir(), "data")
-	n, err := node.Init(ctx, validInitConfig(dataDir))
+	n, err := repository.Init(ctx, validInitConfig(dataDir))
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestOpenUsesPersistedChunkingAndReadsOldCIDAlgorithm(t *testing.T) {
 
 	openConfig := validConfig(dataDir)
 	openConfig.HashAlgorithm = cid.AlgSHA256
-	reopened, err := node.Open(ctx, openConfig)
+	reopened, err := repository.Open(ctx, openConfig)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestOpenUsesPersistedChunkingAndReadsOldCIDAlgorithm(t *testing.T) {
 func TestOpenRejectsWriteLimitsChunkingCannotRepresent(t *testing.T) {
 	ctx := context.Background()
 	dataDir := filepath.Join(t.TempDir(), "data")
-	n, err := node.Init(ctx, validInitConfig(dataDir))
+	n, err := repository.Init(ctx, validInitConfig(dataDir))
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -192,8 +192,8 @@ func TestOpenRejectsWriteLimitsChunkingCannotRepresent(t *testing.T) {
 	config := validConfig(dataDir)
 	config.MaxChunks = 1
 	config.MaxFileSize = 65
-	_, err = node.Open(ctx, config)
-	if !errors.Is(err, node.ErrInvalidConfig) {
+	_, err = repository.Open(ctx, config)
+	if !errors.Is(err, repository.ErrInvalidConfig) {
 		t.Fatalf("Open returned %v, want ErrInvalidConfig", err)
 	}
 	for _, value := range []string{"max_file_size=65", "max_chunks=1", "min_chunk_size=64"} {
@@ -209,7 +209,7 @@ func TestFailedInitDoesNotPersistChunking(t *testing.T) {
 	invalid := validInitConfig(dataDir)
 	invalid.MaxFileSize = int64(invalid.MaxChunks*invalid.Chunking.MinSize) + 1
 
-	if _, err := node.Init(ctx, invalid); !errors.Is(err, node.ErrInvalidConfig) {
+	if _, err := repository.Init(ctx, invalid); !errors.Is(err, repository.ErrInvalidConfig) {
 		t.Fatalf("Init returned %v, want ErrInvalidConfig", err)
 	}
 
@@ -217,7 +217,7 @@ func TestFailedInitDoesNotPersistChunking(t *testing.T) {
 	retry.Chunking.MinSize = 128
 	retry.Chunking.NormalSize = 256
 	retry.Chunking.MaxSize = 512
-	n, err := node.Init(ctx, retry)
+	n, err := repository.Init(ctx, retry)
 	if err != nil {
 		t.Fatalf("retry Init: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestFailedInitDoesNotPersistChunking(t *testing.T) {
 }
 
 func TestNode_StoreRetrieveDeleteGCAndScrub(t *testing.T) {
-	n, err := node.Init(context.Background(), validInitConfig(filepath.Join(t.TempDir(), "data")))
+	n, err := repository.Init(context.Background(), validInitConfig(filepath.Join(t.TempDir(), "data")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestNode_StoreRetrieveDeleteGCAndScrub(t *testing.T) {
 }
 
 func TestNode_GCWaitsForOpenRetrieval(t *testing.T) {
-	n, err := node.Init(context.Background(), validInitConfig(filepath.Join(t.TempDir(), "data")))
+	n, err := repository.Init(context.Background(), validInitConfig(filepath.Join(t.TempDir(), "data")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestNode_GCWaitsForOpenRetrieval(t *testing.T) {
 }
 
 func TestNode_GCConcurrentWithStoreRetrieveAndDelete(t *testing.T) {
-	n, err := node.Init(context.Background(), validInitConfig(filepath.Join(t.TempDir(), "data")))
+	n, err := repository.Init(context.Background(), validInitConfig(filepath.Join(t.TempDir(), "data")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

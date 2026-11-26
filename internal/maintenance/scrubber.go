@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mexirica/strata/internal/cas"
-	"github.com/mexirica/strata/internal/cid"
-	"github.com/mexirica/strata/internal/manifeststore"
+	"github.com/mexirica/strata/internal/content/cas"
+	"github.com/mexirica/strata/internal/content/cid"
+	"github.com/mexirica/strata/internal/file"
 	"github.com/mexirica/strata/internal/storage"
 )
 
@@ -29,11 +29,11 @@ type ScrubIssue struct {
 
 type Scrubber struct {
 	cas           *cas.CAS
-	manifestStore *manifeststore.ManifestStore
+	manifestStore *file.ManifestStore
 	pageSize      int
 }
 
-func NewScrubber(casStore *cas.CAS, manifestStore *manifeststore.ManifestStore, pageSize int) (*Scrubber, error) {
+func NewScrubber(casStore *cas.CAS, manifestStore *file.ManifestStore, pageSize int) (*Scrubber, error) {
 	if casStore == nil || manifestStore == nil || pageSize <= 0 {
 		return nil, fmt.Errorf("%w: dependencies must not be nil and page size must be greater than zero", ErrInvalidConfig)
 	}
@@ -55,7 +55,7 @@ func (s *Scrubber) Run(ctx context.Context) ([]ScrubIssue, error) {
 		for _, manifestCID := range manifestCIDs {
 			manifest, err := s.manifestStore.Get(ctx, manifestCID)
 			if err != nil {
-				if errors.Is(err, manifeststore.ErrCorruptedManifest) || errors.Is(err, manifeststore.ErrInvalidManifest) || errors.Is(err, manifeststore.ErrUnsupportedVersion) || errors.Is(err, storage.ErrNotFound) {
+				if errors.Is(err, file.ErrCorruptedManifest) || errors.Is(err, file.ErrInvalidManifest) || errors.Is(err, file.ErrUnsupportedVersion) || errors.Is(err, storage.ErrNotFound) {
 					manifestValue := manifestCID
 					issues = append(issues, ScrubIssue{Kind: IssueCorruptedManifest, ManifestCID: &manifestValue, Err: err})
 					continue
