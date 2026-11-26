@@ -26,7 +26,7 @@ const (
 	maintenancePageSize     = 1000
 	manifestFixedSize       = 34
 	manifestReferenceSize   = 42
-	manifestOverflowReserve = 42
+	manifestOverflowReserve = manifestFixedSize
 )
 
 var ErrInvalidConfig = errors.New("invalid node config")
