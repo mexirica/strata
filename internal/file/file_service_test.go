@@ -12,32 +12,16 @@ import (
 	"github.com/mexirica/strata/internal/content/chunker"
 	"github.com/mexirica/strata/internal/content/hasher"
 	"github.com/mexirica/strata/internal/file"
-	"github.com/mexirica/strata/internal/storage"
 )
 
 func setupFileService(t *testing.T) (*file.FileService, *file.ManifestStore) {
 	t.Helper()
-	db, err := storage.NewInMemoryBadger()
-	if err != nil {
-		t.Fatalf("failed to init in-memory badger: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-
+	manifestStore, db := setupManifestStore(t)
 	h := hasher.NewBlake3Hasher()
 	casStore, err := cas.NewCAS(db, h, cas.Config{MaxObjectSize: 256 * 1024})
 	if err != nil {
 		t.Fatalf("failed to create CAS: %v", err)
 	}
-	manifestStore, err := file.NewManifestStore(db, h, file.ManifestConfig{
-		MaxManifestSize: 1024 * 1024,
-		MaxNameBytes:    1024,
-		MaxChunks:       1024,
-		MaxPageSize:     100,
-	})
-	if err != nil {
-		t.Fatalf("failed to create manifest store: %v", err)
-	}
-
 	cdc, err := chunker.NewCDC(chunker.Config{
 		Algorithm:  chunker.FastCDC,
 		MinSize:    64 * 1024,

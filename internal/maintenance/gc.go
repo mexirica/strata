@@ -33,18 +33,31 @@ func NewGarbageCollector(casStore *cas.CAS, manifestStore *file.ManifestStore, p
 	return &GarbageCollector{cas: casStore, manifestStore: manifestStore, pageSize: pageSize}, nil
 }
 
+// Run completes verified marking before deleting anything. Reachability is held
+// in memory; callers must exclude concurrent mutations. On failure, the report
+// retains completed work. In dry-run, ChunksDeleted counts deletion candidates.
 func (g *GarbageCollector) Run(ctx context.Context, dryRun bool) (GCReport, error) {
 	var report GCReport
 	if ctx == nil {
 		return report, errors.New("context is nil")
 	}
 
+	referenced, err := g.mark(ctx, &report)
+	if err != nil {
+		return report, err
+	}
+	report.ChunksReferenced = len(referenced)
+	err = g.sweep(ctx, referenced, dryRun, &report)
+	return report, err
+}
+
+func (g *GarbageCollector) mark(ctx context.Context, report *GCReport) (map[cid.CID]struct{}, error) {
 	referenced := make(map[cid.CID]struct{})
 	var manifestCursor *cid.CID
 	for {
 		manifests, next, err := g.manifestStore.ListManifests(ctx, manifestCursor, g.pageSize)
 		if err != nil {
-			return report, err
+			return nil, err
 		}
 		for _, stored := range manifests {
 			report.ManifestsScanned++
@@ -57,13 +70,15 @@ func (g *GarbageCollector) Run(ctx context.Context, dryRun bool) (GCReport, erro
 		}
 		manifestCursor = next
 	}
-	report.ChunksReferenced = len(referenced)
+	return referenced, nil
+}
 
+func (g *GarbageCollector) sweep(ctx context.Context, referenced map[cid.CID]struct{}, dryRun bool, report *GCReport) error {
 	var chunkCursor *cid.CID
 	for {
 		chunks, next, err := g.cas.ListChunks(ctx, chunkCursor, g.pageSize)
 		if err != nil {
-			return report, err
+			return err
 		}
 		for _, chunkCID := range chunks {
 			report.ChunksScanned++
@@ -72,7 +87,7 @@ func (g *GarbageCollector) Run(ctx context.Context, dryRun bool) (GCReport, erro
 			}
 			if !dryRun {
 				if err := g.cas.Delete(ctx, chunkCID); err != nil {
-					return report, err
+					return err
 				}
 			}
 			report.ChunksDeleted++
@@ -82,5 +97,5 @@ func (g *GarbageCollector) Run(ctx context.Context, dryRun bool) (GCReport, erro
 		}
 		chunkCursor = next
 	}
-	return report, nil
+	return nil
 }

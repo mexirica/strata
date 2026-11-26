@@ -238,9 +238,9 @@ Run `strata gc` without the flag to delete unreferenced chunks.
 strata scrub
 ```
 
-The command verifies manifest encoding, chunk availability, chunk hashes, and
-the reconstructed file size. It exits with an error when an integrity issue is
-found.
+The command verifies manifest encoding, chunk availability, chunk hashes,
+individual reference sizes, and the reconstructed file size. It exits with an
+error when an integrity issue is found.
 
 ### Data Directory
 
@@ -254,20 +254,8 @@ The configured data directory contains BadgerDB files such as `.sst`, `.vlog`,
 
 ## Development
 
-The repository is organized by executable entrypoints and internal packages:
-
-```text
-cmd/cli/                 CLI executable
-internal/cas/            Content-addressed chunk storage
-internal/chunker/        FastCDC chunking
-internal/cid/            Content identifier encoding
-internal/cli/            Cobra commands and Viper configuration
-internal/fileservice/    File storage and retrieval
-internal/maintenance/    Garbage collection and scrubbing
-internal/manifeststore/  File manifest persistence
-internal/node/           Single-node facade
-internal/storage/        BadgerDB storage adapter
-```
+See [Project Structure](#project-structure) for the package layout and the
+[development guide](docs/internals/development.md) for focused test commands.
 
 Run the complete test suite:
 

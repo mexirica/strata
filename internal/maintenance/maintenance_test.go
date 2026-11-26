@@ -367,6 +367,120 @@ type maintenanceRead struct {
 	size      int
 }
 
+type failingMaintenanceStorage struct {
+	storage.ObjectStorage
+	manifestPages    int
+	failManifestPage int
+	failGetKey       []byte
+	failure          error
+}
+
+func (s *failingMaintenanceStorage) Get(ctx context.Context, key []byte) ([]byte, error) {
+	if bytes.Equal(key, s.failGetKey) {
+		return nil, s.failure
+	}
+	return s.ObjectStorage.Get(ctx, key)
+}
+
+func (s *failingMaintenanceStorage) ListPage(ctx context.Context, prefix, after []byte, limit int) ([]storage.Object, []byte, error) {
+	if bytes.Equal(prefix, []byte("manifest:")) {
+		s.manifestPages++
+		if s.manifestPages == s.failManifestPage {
+			return nil, nil, s.failure
+		}
+	}
+	return s.ObjectStorage.ListPage(ctx, prefix, after, limit)
+}
+
+func TestGarbageCollector_PartialReportOnMarkFailure(t *testing.T) {
+	ctx := context.Background()
+	_, _, raw := setupMaintenance(t)
+	failure := errors.New("manifest page unavailable")
+	failing := &failingMaintenanceStorage{ObjectStorage: raw, failManifestPage: 2, failure: failure}
+	tracked := &recordingStorage{ObjectStorage: failing}
+	chunks, manifests := newMaintenanceStores(t, tracked)
+	sharedCID, err := chunks.Put(ctx, []byte("shared"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphanCID, err := chunks.Put(ctx, []byte("orphan"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"one", "two"} {
+		_, err := manifests.Put(ctx, file.FileManifest{
+			Version: file.CurrentVersion, Name: name, Size: 6,
+			Chunks: []file.ChunkReference{{CID: sharedCID, Size: 6}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	gc, err := maintenance.NewGarbageCollector(chunks, manifests, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := gc.Run(ctx, false)
+	if !errors.Is(err, failure) {
+		t.Fatalf("Run error = %v, want %v", err, failure)
+	}
+	if want := (maintenance.GCReport{ManifestsScanned: 1}); report != want {
+		t.Fatalf("partial report = %+v, want %+v", report, want)
+	}
+	for _, read := range tracked.reads {
+		if read.operation == "list keys" && read.key == "chunk:" {
+			t.Fatal("GC started sweeping before marking completed")
+		}
+	}
+	if _, err := chunks.Get(ctx, orphanCID); err != nil {
+		t.Fatalf("orphan must survive failed marking: %v", err)
+	}
+}
+
+func TestScrubber_PartialIssuesOnChunkReadFailure(t *testing.T) {
+	ctx := context.Background()
+	_, _, raw := setupMaintenance(t)
+	failure := errors.New("chunk unavailable")
+	failing := &failingMaintenanceStorage{ObjectStorage: raw, failure: failure}
+	chunks, manifests := newMaintenanceStores(t, failing)
+	var references []file.ChunkReference
+	for _, data := range []string{"missing", "failing"} {
+		chunkCID, err := chunks.Put(ctx, []byte(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		references = append(references, file.ChunkReference{CID: chunkCID, Size: 7})
+	}
+	manifestCID, err := manifests.Put(ctx, file.FileManifest{
+		Version: file.CurrentVersion, Name: "partial", Size: 14, Chunks: references,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := chunks.Delete(ctx, references[0].CID); err != nil {
+		t.Fatal(err)
+	}
+	failing.failGetKey = append([]byte("chunk:"), references[1].CID.Bytes()...)
+	scrubber, err := maintenance.NewScrubber(chunks, manifests, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issues, err := scrubber.Run(ctx)
+	if !errors.Is(err, failure) {
+		t.Fatalf("Run error = %v, want %v", err, failure)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("partial issues = %+v, want only the preceding missing chunk", issues)
+	}
+	issue := issues[0]
+	if issue.Kind != maintenance.IssueMissingChunk || !errors.Is(issue.Err, storage.ErrNotFound) {
+		t.Fatalf("partial issue = %+v, want missing chunk", issue)
+	}
+	if issue.ManifestCID == nil || *issue.ManifestCID != manifestCID || issue.ChunkCID == nil || *issue.ChunkCID != references[0].CID {
+		t.Fatalf("partial issue identifies the wrong manifest or chunk: %+v", issue)
+	}
+}
+
 type recordingStorage struct {
 	storage.ObjectStorage
 	reads []maintenanceRead

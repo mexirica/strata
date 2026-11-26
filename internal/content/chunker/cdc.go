@@ -22,6 +22,7 @@ const (
 	JC       CdcAlgorithm = "jc"
 
 	MaxSupportedChunkSize = 64 * 1024 * 1024
+	fastCDCMinSize        = 64
 )
 
 var (
@@ -64,8 +65,8 @@ func (c Config) validate() error {
 
 	switch c.Algorithm {
 	case FastCDC:
-		if c.MinSize < 64 {
-			return fmt.Errorf("%w: FastCDC min size must be at least 64 bytes", ErrInvalidConfig)
+		if c.MinSize < fastCDCMinSize {
+			return fmt.Errorf("%w: FastCDC min size must be at least %d bytes", ErrInvalidConfig, fastCDCMinSize)
 		}
 		if c.NormalSize&(c.NormalSize-1) != 0 {
 			return fmt.Errorf("%w: FastCDC normal size must be a power of two", ErrInvalidConfig)
@@ -104,6 +105,10 @@ func (c *CDC) bufferSize() int {
 	return c.config.MaxSize
 }
 
+// Split borrows a pooled buffer and calls fn synchronously for each chunk.
+// Chunk bytes are valid only until fn returns; retain a copy if needed later.
+// Cancellation is checked between reads and before callbacks, but cannot
+// interrupt a blocked source Read. Callback errors stop splitting immediately.
 func (c *CDC) Split(
 	ctx context.Context,
 	r io.Reader,
@@ -162,7 +167,6 @@ func (c *CDC) split(
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			// chunk is backed by the reusable internal buffer and is valid only until fn returns.
 			if errFn := fn(chunk); errFn != nil {
 				return errFn
 			}
