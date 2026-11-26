@@ -99,6 +99,9 @@ func (s *Store) Load(ctx context.Context) (Metadata, error) {
 	return metadata, nil
 }
 
+// LoadOrCreate returns existing validated metadata without comparing candidate.
+// Creation is allowed only after an empty key scan; callers must serialize
+// initialization against other writes and check compatibility themselves.
 func (s *Store) LoadOrCreate(ctx context.Context, candidate Metadata) (Metadata, error) {
 	metadata, err := s.Load(ctx)
 	if err == nil {

@@ -106,6 +106,8 @@ func (s *FileService) Store(
 	return manifestCID, nil
 }
 
+// Retrieve verifies the manifest before returning a stream. Chunk integrity and
+// length errors surface during Read; Close cancels the producer even after EOF.
 func (s *FileService) Retrieve(
 	ctx context.Context,
 	manifestCID cid.CID,
@@ -126,40 +128,39 @@ func (s *FileService) Retrieve(
 
 	go func() {
 		defer cancel()
-		var written int64
-		for _, chunkRef := range manifest.Chunks {
-			if err := streamCtx.Err(); err != nil {
-				_ = pw.CloseWithError(err)
-				return
-			}
-
-			chunk, err := s.cas.Get(streamCtx, chunkRef.CID)
-			if err != nil {
-				_ = pw.CloseWithError(err)
-				return
-			}
-			if uint64(len(chunk)) != chunkRef.Size {
-				_ = pw.CloseWithError(ErrChunkSizeMismatch)
-				return
-			}
-			if int64(len(chunk)) > manifest.Size-written {
-				_ = pw.CloseWithError(ErrManifestSizeMismatch)
-				return
-			}
-			if _, err := pw.Write(chunk); err != nil {
-				_ = pw.CloseWithError(err)
-				return
-			}
-			written += int64(len(chunk))
-		}
-		if written != manifest.Size {
-			_ = pw.CloseWithError(ErrManifestSizeMismatch)
-			return
-		}
-		_ = pw.Close()
+		_ = pw.CloseWithError(s.writeChunks(streamCtx, pw, manifest))
 	}()
 
 	return &retrievalReader{PipeReader: pr, cancel: cancel}, &manifest, nil
+}
+
+// writeChunks emits only verified chunks whose individual and cumulative sizes
+// match the manifest. A later failure leaves the already verified prefix intact.
+func (s *FileService) writeChunks(ctx context.Context, writer *io.PipeWriter, manifest FileManifest) error {
+	var written int64
+	for _, chunkRef := range manifest.Chunks {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		chunk, err := s.cas.Get(ctx, chunkRef.CID)
+		if err != nil {
+			return err
+		}
+		if uint64(len(chunk)) != chunkRef.Size {
+			return ErrChunkSizeMismatch
+		}
+		if int64(len(chunk)) > manifest.Size-written {
+			return ErrManifestSizeMismatch
+		}
+		if _, err := writer.Write(chunk); err != nil {
+			return err
+		}
+		written += int64(len(chunk))
+	}
+	if written != manifest.Size {
+		return ErrManifestSizeMismatch
+	}
+	return nil
 }
 
 func (s *FileService) Delete(ctx context.Context, manifestCID cid.CID) error {

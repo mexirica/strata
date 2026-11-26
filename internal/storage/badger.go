@@ -48,6 +48,9 @@ func (b *Badger) Put(ctx context.Context, key, value []byte) error {
 	return translateError(err)
 }
 
+// PutIfNotExists atomically inserts an absent key. Identical existing bytes are
+// an idempotent no-op; different bytes return ErrContentMismatch without writing.
+// Optimistic conflicts retry the entire transaction until completion or cancellation.
 func (b *Badger) PutIfNotExists(ctx context.Context, key, value []byte) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err

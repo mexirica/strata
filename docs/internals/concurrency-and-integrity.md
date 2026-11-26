@@ -1,6 +1,6 @@
 # Concurrency and Integrity
 
-Strata combines repository-wide coordination in `node.Node` with
+Strata combines repository-wide coordination in `repository.Node` with
 content-level verification in the manifest and CAS stores.
 
 ## Node Locking
@@ -22,8 +22,8 @@ overlap any facade operation, which prevents it from deleting chunks between a
 chunk write and manifest publication or while a retrieval is open.
 
 `Close` is idempotent through `sync.Once`, but it waits for active operations.
-A retrieval reader that is never closed can therefore block both garbage
-collection and shutdown indefinitely.
+A retrieval reader must be closed even after EOF. A reader that is never closed
+can block both garbage collection and shutdown indefinitely.
 
 ## Atomicity Boundaries
 
@@ -55,8 +55,9 @@ flowchart LR
 ```
 
 Manifest bytes are verified before decoding. Chunk bytes are verified before
-streaming. Retrieval additionally checks that chunk lengths cannot exceed the
-declared size and that final reconstruction is exact. The system fails closed:
+streaming. Retrieval additionally checks each chunk's length against its
+reference, the cumulative bound against the declared size, and exact final
+reconstruction. The system fails closed:
 hash-invalid data is returned as an error, never as file contents.
 
 ## Failure Cases
@@ -80,7 +81,10 @@ lease.
 
 ## Configuration Validation
 
-`node.New` rejects unsafe or unrepresentable configurations, including:
+[`repository.Init` and `repository.Open`](../../internal/repository/node.go)
+reject unsafe or unrepresentable configurations. Init validates requested
+chunking; Open validates and uses chunking loaded from immutable metadata.
+Checks include:
 
 - chunk sizes that do not satisfy $0 < min < target < max$;
 - a FastCDC minimum below 64 bytes;
@@ -94,3 +98,8 @@ lease.
 The final rule is conservative: it guarantees the chunk-count limit for any
 valid split, but may reject a configuration that would usually fit with larger
 average chunks.
+
+For a new initialization, write limits are validated before metadata creation.
+For repeated initialization, persisted chunking incompatibility is reported
+before requested write-limit incompatibility. Opening with a different hash
+algorithm affects new writes only; reads select the verifier from each CID.
