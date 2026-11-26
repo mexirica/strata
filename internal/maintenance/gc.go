@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mexirica/strata/internal/cas"
-	"github.com/mexirica/strata/internal/cid"
-	"github.com/mexirica/strata/internal/manifeststore"
+	"github.com/mexirica/strata/internal/content/cas"
+	"github.com/mexirica/strata/internal/content/cid"
+	"github.com/mexirica/strata/internal/file"
 )
 
 var ErrInvalidConfig = errors.New("invalid maintenance config")
@@ -22,11 +22,11 @@ type GCReport struct {
 
 type GarbageCollector struct {
 	cas           *cas.CAS
-	manifestStore *manifeststore.ManifestStore
+	manifestStore *file.ManifestStore
 	pageSize      int
 }
 
-func NewGarbageCollector(casStore *cas.CAS, manifestStore *manifeststore.ManifestStore, pageSize int) (*GarbageCollector, error) {
+func NewGarbageCollector(casStore *cas.CAS, manifestStore *file.ManifestStore, pageSize int) (*GarbageCollector, error) {
 	if casStore == nil || manifestStore == nil || pageSize <= 0 {
 		return nil, fmt.Errorf("%w: dependencies must not be nil and page size must be greater than zero", ErrInvalidConfig)
 	}

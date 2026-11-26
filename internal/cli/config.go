@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mexirica/strata/internal/chunker"
-	"github.com/mexirica/strata/internal/cid"
-	"github.com/mexirica/strata/internal/node"
+	"github.com/mexirica/strata/internal/content/chunker"
+	"github.com/mexirica/strata/internal/content/cid"
+	"github.com/mexirica/strata/internal/repository"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"go.yaml.in/yaml/v3"
@@ -57,7 +57,7 @@ func loadConfig(path string) (config, error) {
 	return cfg, nil
 }
 
-func (c config) nodeConfig() (node.Config, error) {
+func (c config) nodeConfig() (repository.Config, error) {
 	var algorithm cid.Algorithm
 	switch strings.ToLower(c.HashAlgorithm) {
 	case "blake3":
@@ -65,9 +65,9 @@ func (c config) nodeConfig() (node.Config, error) {
 	case "sha256":
 		algorithm = cid.AlgSHA256
 	default:
-		return node.Config{}, fmt.Errorf("unsupported hash_algorithm %q", c.HashAlgorithm)
+		return repository.Config{}, fmt.Errorf("unsupported hash_algorithm %q", c.HashAlgorithm)
 	}
-	return node.Config{
+	return repository.Config{
 		DataDir:       c.DataDir,
 		HashAlgorithm: algorithm,
 		MaxFileSize:   c.MaxFileSize,

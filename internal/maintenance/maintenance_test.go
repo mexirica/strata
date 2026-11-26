@@ -7,15 +7,15 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mexirica/strata/internal/cas"
-	"github.com/mexirica/strata/internal/cid"
-	"github.com/mexirica/strata/internal/hasher"
+	"github.com/mexirica/strata/internal/content/cas"
+	"github.com/mexirica/strata/internal/content/cid"
+	"github.com/mexirica/strata/internal/content/hasher"
+	"github.com/mexirica/strata/internal/file"
 	"github.com/mexirica/strata/internal/maintenance"
-	"github.com/mexirica/strata/internal/manifeststore"
 	"github.com/mexirica/strata/internal/storage"
 )
 
-func setupMaintenance(t testing.TB) (*cas.CAS, *manifeststore.ManifestStore, *storage.Badger) {
+func setupMaintenance(t testing.TB) (*cas.CAS, *file.ManifestStore, *storage.Badger) {
 	t.Helper()
 	db, err := storage.NewInMemoryBadger()
 	if err != nil {
@@ -27,7 +27,7 @@ func setupMaintenance(t testing.TB) (*cas.CAS, *manifeststore.ManifestStore, *st
 	if err != nil {
 		t.Fatalf("create CAS: %v", err)
 	}
-	manifests, err := manifeststore.NewManifestStore(db, h, manifeststore.Config{
+	manifests, err := file.NewManifestStore(db, h, file.ManifestConfig{
 		MaxManifestSize: 4096,
 		MaxNameBytes:    128,
 		MaxChunks:       32,
@@ -45,11 +45,11 @@ func TestGarbageCollector_PreservesSharedChunksAndRemovesOrphans(t *testing.T) {
 	shared, _ := casStore.Put(ctx, []byte("shared"))
 	firstOnly, _ := casStore.Put(ctx, []byte("first"))
 	orphan, _ := casStore.Put(ctx, []byte("orphan"))
-	_, err := manifests.Put(ctx, manifeststore.FileManifest{Version: manifeststore.CurrentVersion, Name: "one", Size: 11, Chunks: []cid.CID{shared, firstOnly}})
+	_, err := manifests.Put(ctx, file.FileManifest{Version: file.CurrentVersion, Name: "one", Size: 11, Chunks: []cid.CID{shared, firstOnly}})
 	if err != nil {
 		t.Fatalf("put first manifest: %v", err)
 	}
-	_, err = manifests.Put(ctx, manifeststore.FileManifest{Version: manifeststore.CurrentVersion, Name: "two", Size: 6, Chunks: []cid.CID{shared}})
+	_, err = manifests.Put(ctx, file.FileManifest{Version: file.CurrentVersion, Name: "two", Size: 6, Chunks: []cid.CID{shared}})
 	if err != nil {
 		t.Fatalf("put second manifest: %v", err)
 	}
@@ -90,8 +90,8 @@ func TestScrubber_ReportsCorruptAndMissingChunks(t *testing.T) {
 	ctx := context.Background()
 	corrupt, _ := casStore.Put(ctx, []byte("corrupt me"))
 	missing, _ := casStore.Put(ctx, []byte("remove me"))
-	manifestCID, err := manifests.Put(ctx, manifeststore.FileManifest{
-		Version: manifeststore.CurrentVersion,
+	manifestCID, err := manifests.Put(ctx, file.FileManifest{
+		Version: file.CurrentVersion,
 		Name:    "broken",
 		Size:    19,
 		Chunks:  []cid.CID{corrupt, missing},
@@ -140,7 +140,7 @@ func TestScrubber_ReportsCorruptAndMissingChunks(t *testing.T) {
 func TestScrubber_ReportsCorruptedManifestWithoutModifyingIt(t *testing.T) {
 	casStore, manifests, raw := setupMaintenance(t)
 	ctx := context.Background()
-	manifestCID, err := manifests.Put(ctx, manifeststore.FileManifest{Version: manifeststore.CurrentVersion, Name: "corrupt"})
+	manifestCID, err := manifests.Put(ctx, file.FileManifest{Version: file.CurrentVersion, Name: "corrupt"})
 	if err != nil {
 		t.Fatalf("put manifest: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestGarbageCollector_RemovesChunkPersistedBeforeRestart(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	casStore, _ = cas.NewCAS(db, h, cas.Config{MaxObjectSize: 1024})
-	manifests, _ := manifeststore.NewManifestStore(db, h, manifeststore.Config{
+	manifests, _ := file.NewManifestStore(db, h, file.ManifestConfig{
 		MaxManifestSize: 4096,
 		MaxNameBytes:    128,
 		MaxChunks:       32,

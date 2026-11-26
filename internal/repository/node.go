@@ -1,5 +1,5 @@
-// Package node composes Strata's storage services into a single-node facade.
-package node
+// Package repository opens and composes a Strata repository.
+package repository
 
 import (
 	"context"
@@ -12,14 +12,13 @@ import (
 	"time"
 
 	"github.com/mexirica/strata/internal/buildinfo"
-	"github.com/mexirica/strata/internal/cas"
-	"github.com/mexirica/strata/internal/chunker"
-	"github.com/mexirica/strata/internal/cid"
-	"github.com/mexirica/strata/internal/fileservice"
-	"github.com/mexirica/strata/internal/hasher"
+	"github.com/mexirica/strata/internal/content/cas"
+	"github.com/mexirica/strata/internal/content/chunker"
+	"github.com/mexirica/strata/internal/content/cid"
+	"github.com/mexirica/strata/internal/content/hasher"
+	"github.com/mexirica/strata/internal/file"
 	"github.com/mexirica/strata/internal/maintenance"
-	"github.com/mexirica/strata/internal/manifeststore"
-	"github.com/mexirica/strata/internal/metadata"
+	"github.com/mexirica/strata/internal/repository/metadata"
 	"github.com/mexirica/strata/internal/storage"
 )
 
@@ -43,7 +42,7 @@ type InitConfig struct {
 type Node struct {
 	mu        sync.RWMutex
 	storage   *storage.Badger
-	files     *fileservice.FileService
+	files     *file.FileService
 	gc        *maintenance.GarbageCollector
 	scrubber  *maintenance.Scrubber
 	closeOnce sync.Once
@@ -128,7 +127,7 @@ func open(ctx context.Context, config Config, candidate *metadata.Metadata) (*No
 		return closeOnError(fmt.Errorf("create CAS: %w", err))
 	}
 	maxManifestSize := 34 + config.MaxNameBytes + 42*config.MaxChunks
-	manifestStore, err := manifeststore.NewManifestStore(db, contentHasher, manifeststore.Config{
+	manifestStore, err := file.NewManifestStore(db, contentHasher, file.ManifestConfig{
 		MaxManifestSize: maxManifestSize,
 		MaxNameBytes:    config.MaxNameBytes,
 		MaxChunks:       config.MaxChunks,
@@ -137,7 +136,7 @@ func open(ctx context.Context, config Config, candidate *metadata.Metadata) (*No
 	if err != nil {
 		return closeOnError(fmt.Errorf("create manifest store: %w", err))
 	}
-	files, err := fileservice.NewFileService(fileChunker, casStore, manifestStore, fileservice.Config{
+	files, err := file.NewFileService(fileChunker, casStore, manifestStore, file.Config{
 		MaxFileSize:  config.MaxFileSize,
 		MaxChunks:    config.MaxChunks,
 		MaxNameBytes: config.MaxNameBytes,
@@ -197,7 +196,7 @@ func (n *Node) Store(ctx context.Context, name string, reader io.Reader) (cid.CI
 	return n.files.Store(ctx, name, reader)
 }
 
-func (n *Node) Retrieve(ctx context.Context, manifestCID cid.CID) (io.ReadCloser, *manifeststore.FileManifest, error) {
+func (n *Node) Retrieve(ctx context.Context, manifestCID cid.CID) (io.ReadCloser, *file.FileManifest, error) {
 	n.mu.RLock()
 	reader, manifest, err := n.files.Retrieve(ctx, manifestCID)
 	if err != nil {
@@ -213,7 +212,7 @@ func (n *Node) Delete(ctx context.Context, manifestCID cid.CID) error {
 	return n.files.Delete(ctx, manifestCID)
 }
 
-func (n *Node) List(ctx context.Context, after *cid.CID, limit int) ([]manifeststore.StoredManifest, *cid.CID, error) {
+func (n *Node) List(ctx context.Context, after *cid.CID, limit int) ([]file.StoredManifest, *cid.CID, error) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.files.List(ctx, after, limit)

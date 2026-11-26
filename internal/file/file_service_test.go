@@ -1,4 +1,4 @@
-package fileservice_test
+package file_test
 
 import (
 	"bytes"
@@ -8,15 +8,14 @@ import (
 	"io"
 	"testing"
 
-	"github.com/mexirica/strata/internal/cas"
-	"github.com/mexirica/strata/internal/chunker"
-	"github.com/mexirica/strata/internal/fileservice"
-	"github.com/mexirica/strata/internal/hasher"
-	"github.com/mexirica/strata/internal/manifeststore"
+	"github.com/mexirica/strata/internal/content/cas"
+	"github.com/mexirica/strata/internal/content/chunker"
+	"github.com/mexirica/strata/internal/content/hasher"
+	"github.com/mexirica/strata/internal/file"
 	"github.com/mexirica/strata/internal/storage"
 )
 
-func setupFileService(t *testing.T) (*fileservice.FileService, *manifeststore.ManifestStore) {
+func setupFileService(t *testing.T) (*file.FileService, *file.ManifestStore) {
 	t.Helper()
 	db, err := storage.NewInMemoryBadger()
 	if err != nil {
@@ -29,7 +28,7 @@ func setupFileService(t *testing.T) (*fileservice.FileService, *manifeststore.Ma
 	if err != nil {
 		t.Fatalf("failed to create CAS: %v", err)
 	}
-	manifestStore, err := manifeststore.NewManifestStore(db, h, manifeststore.Config{
+	manifestStore, err := file.NewManifestStore(db, h, file.ManifestConfig{
 		MaxManifestSize: 1024 * 1024,
 		MaxNameBytes:    1024,
 		MaxChunks:       1024,
@@ -49,7 +48,7 @@ func setupFileService(t *testing.T) (*fileservice.FileService, *manifeststore.Ma
 		t.Fatalf("failed to create cdc: %v", err)
 	}
 
-	fs, err := fileservice.NewFileService(cdc, casStore, manifestStore, fileservice.Config{
+	fs, err := file.NewFileService(cdc, casStore, manifestStore, file.Config{
 		MaxFileSize:  2 * 1024 * 1024,
 		MaxChunks:    1024,
 		MaxNameBytes: 1024,
@@ -117,11 +116,11 @@ func TestFileService_StoreRejectsLimits(t *testing.T) {
 	fs, _ := setupFileService(t)
 	ctx := context.Background()
 
-	if _, err := fs.Store(ctx, "", bytes.NewReader(nil)); !errors.Is(err, fileservice.ErrInvalidName) {
+	if _, err := fs.Store(ctx, "", bytes.NewReader(nil)); !errors.Is(err, file.ErrInvalidName) {
 		t.Fatalf("expected ErrInvalidName, got %v", err)
 	}
 	tooLarge := bytes.NewReader(make([]byte, 3*1024*1024))
-	if _, err := fs.Store(ctx, "large.bin", tooLarge); !errors.Is(err, fileservice.ErrFileTooLarge) {
+	if _, err := fs.Store(ctx, "large.bin", tooLarge); !errors.Is(err, file.ErrFileTooLarge) {
 		t.Fatalf("expected ErrFileTooLarge, got %v", err)
 	}
 }

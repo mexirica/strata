@@ -1,5 +1,5 @@
-// Package fileservice stores and retrieves files through chunked content-addressed storage.
-package fileservice
+// Package file stores and retrieves files and their manifests.
+package file
 
 import (
 	"context"
@@ -8,10 +8,9 @@ import (
 	"io"
 	"unicode/utf8"
 
-	"github.com/mexirica/strata/internal/cas"
-	"github.com/mexirica/strata/internal/chunker"
-	"github.com/mexirica/strata/internal/cid"
-	"github.com/mexirica/strata/internal/manifeststore"
+	"github.com/mexirica/strata/internal/content/cas"
+	"github.com/mexirica/strata/internal/content/chunker"
+	"github.com/mexirica/strata/internal/content/cid"
 )
 
 var (
@@ -32,11 +31,11 @@ type Config struct {
 type FileService struct {
 	chunker       *chunker.CDC
 	cas           *cas.CAS
-	manifestStore *manifeststore.ManifestStore
+	manifestStore *ManifestStore
 	config        Config
 }
 
-func NewFileService(fileChunker *chunker.CDC, casStore *cas.CAS, manifestStore *manifeststore.ManifestStore, config Config) (*FileService, error) {
+func NewFileService(fileChunker *chunker.CDC, casStore *cas.CAS, manifestStore *ManifestStore, config Config) (*FileService, error) {
 	if fileChunker == nil || casStore == nil || manifestStore == nil {
 		return nil, fmt.Errorf("%w: dependencies must not be nil", ErrInvalidConfig)
 	}
@@ -94,8 +93,8 @@ func (s *FileService) Store(
 		return cid.CID{}, err
 	}
 
-	manifestCID, err := s.manifestStore.Put(ctx, manifeststore.FileManifest{
-		Version: manifeststore.CurrentVersion,
+	manifestCID, err := s.manifestStore.Put(ctx, FileManifest{
+		Version: CurrentVersion,
 		Name:    name,
 		Size:    size,
 		Chunks:  chunks,
@@ -109,7 +108,7 @@ func (s *FileService) Store(
 func (s *FileService) Retrieve(
 	ctx context.Context,
 	manifestCID cid.CID,
-) (io.ReadCloser, *manifeststore.FileManifest, error) {
+) (io.ReadCloser, *FileManifest, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("context is nil")
 	}
@@ -172,7 +171,7 @@ func (s *FileService) Delete(ctx context.Context, manifestCID cid.CID) error {
 	return s.manifestStore.Delete(ctx, manifestCID)
 }
 
-func (s *FileService) List(ctx context.Context, after *cid.CID, limit int) ([]manifeststore.StoredManifest, *cid.CID, error) {
+func (s *FileService) List(ctx context.Context, after *cid.CID, limit int) ([]StoredManifest, *cid.CID, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("context is nil")
 	}

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mexirica/strata/internal/metadata"
+	"github.com/mexirica/strata/internal/repository/metadata"
 	"github.com/mexirica/strata/internal/storage"
 )
 

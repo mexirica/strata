@@ -1,5 +1,5 @@
-// Package manifeststore persists canonical content-addressed file manifests.
-package manifeststore
+// Package file stores and retrieves files and their manifests.
+package file
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 	"math"
 	"unicode/utf8"
 
-	"github.com/mexirica/strata/internal/cid"
-	"github.com/mexirica/strata/internal/hasher"
+	"github.com/mexirica/strata/internal/content/cid"
+	"github.com/mexirica/strata/internal/content/hasher"
 	"github.com/mexirica/strata/internal/storage"
 )
 
@@ -20,10 +20,10 @@ const (
 )
 
 var (
-	ErrInvalidConfig      = errors.New("invalid manifest store config")
-	ErrInvalidManifest    = errors.New("invalid manifest")
-	ErrUnsupportedVersion = errors.New("unsupported manifest version")
-	ErrCorruptedManifest  = errors.New("corrupted manifest")
+	ErrInvalidManifestConfig = errors.New("invalid manifest store config")
+	ErrInvalidManifest       = errors.New("invalid manifest")
+	ErrUnsupportedVersion    = errors.New("unsupported manifest version")
+	ErrCorruptedManifest     = errors.New("corrupted manifest")
 )
 
 var (
@@ -31,7 +31,7 @@ var (
 	manifestPrefix = []byte("manifest:")
 )
 
-type Config struct {
+type ManifestConfig struct {
 	MaxManifestSize int
 	MaxNameBytes    int
 	MaxChunks       int
@@ -41,7 +41,7 @@ type Config struct {
 type ManifestStore struct {
 	storage storage.ObjectStorage
 	hasher  hasher.Hasher
-	config  Config
+	config  ManifestConfig
 }
 
 type FileManifest struct {
@@ -61,15 +61,15 @@ type StoredManifest struct {
 	Manifest FileManifest
 }
 
-func NewManifestStore(store storage.ObjectStorage, defaultHasher hasher.Hasher, config Config) (*ManifestStore, error) {
+func NewManifestStore(store storage.ObjectStorage, defaultHasher hasher.Hasher, config ManifestConfig) (*ManifestStore, error) {
 	if store == nil {
-		return nil, fmt.Errorf("%w: storage is nil", ErrInvalidConfig)
+		return nil, fmt.Errorf("%w: storage is nil", ErrInvalidManifestConfig)
 	}
 	if defaultHasher == nil {
-		return nil, fmt.Errorf("%w: hasher is nil", ErrInvalidConfig)
+		return nil, fmt.Errorf("%w: hasher is nil", ErrInvalidManifestConfig)
 	}
 	if config.MaxManifestSize <= len(manifestDomain)+18 || config.MaxNameBytes <= 0 || config.MaxChunks <= 0 || config.MaxPageSize <= 0 {
-		return nil, fmt.Errorf("%w: all limits must be greater than zero", ErrInvalidConfig)
+		return nil, fmt.Errorf("%w: all limits must be greater than zero", ErrInvalidManifestConfig)
 	}
 	return &ManifestStore{storage: store, hasher: defaultHasher, config: config}, nil
 }
