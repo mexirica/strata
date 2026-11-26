@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"math"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -96,47 +98,136 @@ func TestManifestStore_CRUD(t *testing.T) {
 	}
 }
 
-func TestManifestStore_CanonicalChunkReferences(t *testing.T) {
-	store, raw := setupManifestStore(t)
-	ctx := context.Background()
-	golden, err := hex.DecodeString(
-		"7374726174612d6d616e696665737400" +
-			"000100000008746573742e706466000000000000040000000002" +
-			"1e2001" + strings.Repeat("00", 31) + "0000000000000100" +
-			"1e2002" + strings.Repeat("00", 31) + "0000000000000300",
-	)
+func TestManifestStore_DocumentedVectors(t *testing.T) {
+	const domainHex = "7374726174612d6d616e696665737400"
+	const nameHeaderHex = domainHex + "000100000008746573742e706466"
+	const headerHex = nameHeaderHex + "000000000000040000000002"
+	firstHex := "1e2001" + strings.Repeat("00", 31)
+	secondHex := "1e2002" + strings.Repeat("00", 31)
+	firstCID, err := cid.NewCID(cid.AlgBlake3, [32]byte{1})
 	if err != nil {
-		t.Fatalf("decode golden bytes: %v", err)
+		t.Fatalf("create first fixture CID: %v", err)
 	}
-	h := hasher.NewBlake3Hasher()
-	manifestCID := h.Hash(golden)
-	key := append([]byte("manifest:"), manifestCID.Bytes()...)
-	if err := raw.Put(ctx, key, golden); err != nil {
-		t.Fatalf("store golden bytes: %v", err)
-	}
-	manifest, err := store.Get(ctx, manifestCID)
+	secondCID, err := cid.NewCID(cid.AlgBlake3, [32]byte{2})
 	if err != nil {
-		t.Fatalf("decode golden manifest: %v", err)
+		t.Fatalf("create second fixture CID: %v", err)
 	}
-	if manifest.Name != "test.pdf" || manifest.Size != 1024 || len(manifest.Chunks) != 2 ||
-		manifest.Chunks[0].Size != 256 || manifest.Chunks[1].Size != 768 {
-		t.Fatalf("unexpected golden manifest: %+v", manifest)
+	tests := []struct {
+		name     string
+		hex      string
+		manifest file.FileManifest
+		wantErr  error
+	}{
+		{
+			name:     "empty-file",
+			hex:      domainHex + "000100000005612e747874000000000000000000000000",
+			manifest: file.FileManifest{Version: 1, Name: "a.txt"},
+		},
+		{
+			name: "two-chunks",
+			hex:  headerHex + firstHex + "0000000000000100" + secondHex + "0000000000000300",
+			manifest: file.FileManifest{
+				Version: 1, Name: "test.pdf", Size: 1024,
+				Chunks: []file.ChunkReference{{CID: firstCID, Size: 256}, {CID: secondCID, Size: 768}},
+			},
+		},
+		{
+			name:    "truncated-reference",
+			hex:     headerHex + firstHex + "0000000000000100" + secondHex + "00000000000003",
+			wantErr: file.ErrInvalidManifest,
+		},
+		{
+			name:    "zero-chunk-size",
+			hex:     headerHex + firstHex + "0000000000000000" + secondHex + "0000000000000300",
+			wantErr: file.ErrInvalidManifest,
+		},
+		{
+			name:    "chunk-size-overflow",
+			hex:     headerHex + firstHex + "8000000000000000" + secondHex + "0000000000000300",
+			wantErr: file.ErrInvalidManifest,
+		},
+		{
+			name:    "cumulative-size-overflow",
+			hex:     nameHeaderHex + "7fffffffffffffff00000002" + firstHex + "7fffffffffffffff" + secondHex + "0000000000000001",
+			wantErr: file.ErrInvalidManifest,
+		},
+		{
+			name:    "reconstructed-size-mismatch",
+			hex:     headerHex + firstHex + "0000000000000100" + secondHex + "0000000000000301",
+			wantErr: file.ErrInvalidManifest,
+		},
 	}
-	for attempt := 0; attempt < 2; attempt++ {
-		if err := store.Delete(ctx, manifestCID); err != nil {
-			t.Fatalf("delete before re-encoding: %v", err)
-		}
-		encodedCID, err := store.Put(ctx, manifest)
-		if err != nil {
-			t.Fatalf("re-encode manifest: %v", err)
-		}
-		encoded, err := raw.Get(ctx, append([]byte("manifest:"), encodedCID.Bytes()...))
-		if err != nil {
-			t.Fatalf("read encoded bytes: %v", err)
-		}
-		if encodedCID != manifestCID || !bytes.Equal(encoded, golden) {
-			t.Fatalf("encoding %d does not match canonical CID-and-size layout: %x", attempt, encoded)
-		}
+	document, err := os.ReadFile("../../docs/internals/storage-format.md")
+	if err != nil {
+		t.Fatalf("read storage-format documentation: %v", err)
+	}
+	_, vectors, found := strings.Cut(string(document), "\n## Manifest Test Vectors\n")
+	if !found {
+		t.Fatal("missing documented manifest vector section")
+	}
+	vectors, _, _ = strings.Cut(vectors, "\n## ")
+	if strings.Count(vectors, "\n### ") != len(tests) || strings.Count(vectors, "```text\n") != len(tests) {
+		t.Fatal("every documented vector must have exactly one named section, hex block, and golden test")
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, section, found := strings.Cut(vectors, "\n### "+tc.name+"\n")
+			if !found {
+				t.Fatal("missing documented vector")
+			}
+			section, _, _ = strings.Cut(section, "\n### ")
+			_, block, found := strings.Cut(section, "```text\n")
+			if !found {
+				t.Fatal("missing hexadecimal block")
+			}
+			block, _, found = strings.Cut(block, "\n```")
+			if !found {
+				t.Fatal("unterminated hexadecimal block")
+			}
+			if documentedHex := strings.Join(strings.Fields(block), ""); documentedHex != tc.hex {
+				t.Fatalf("documented bytes differ from golden fixture:\n got %s\nwant %s", documentedHex, tc.hex)
+			}
+			golden, err := hex.DecodeString(tc.hex)
+			if err != nil {
+				t.Fatalf("decode golden bytes: %v", err)
+			}
+			store, raw := setupManifestStore(t)
+			ctx := context.Background()
+			manifestCID := hasher.NewBlake3Hasher().Hash(golden)
+			key := append([]byte("manifest:"), manifestCID.Bytes()...)
+			if tc.wantErr != nil {
+				if err := raw.Put(ctx, key, golden); err != nil {
+					t.Fatalf("store rehashed malformed vector: %v", err)
+				}
+				if _, err := store.Get(ctx, manifestCID); !errors.Is(err, tc.wantErr) {
+					t.Fatalf("Get returned %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			for attempt := 0; attempt < 2; attempt++ {
+				encodedCID, err := store.Put(ctx, tc.manifest)
+				if err != nil {
+					t.Fatalf("encode manifest: %v", err)
+				}
+				encoded, err := raw.Get(ctx, append([]byte("manifest:"), encodedCID.Bytes()...))
+				if err != nil {
+					t.Fatalf("read encoded bytes: %v", err)
+				}
+				if encodedCID != manifestCID || !bytes.Equal(encoded, golden) {
+					t.Fatalf("encoding %d differs from documented golden vector: %x", attempt, encoded)
+				}
+				decoded, err := store.Get(ctx, manifestCID)
+				if err != nil {
+					t.Fatalf("decode golden manifest: %v", err)
+				}
+				if decoded.Version != tc.manifest.Version || decoded.Name != tc.manifest.Name || decoded.Size != tc.manifest.Size || !slices.Equal(decoded.Chunks, tc.manifest.Chunks) {
+					t.Fatalf("decoded manifest differs: got %+v, want %+v", decoded, tc.manifest)
+				}
+				if err := store.Delete(ctx, manifestCID); err != nil {
+					t.Fatalf("delete before re-encoding: %v", err)
+				}
+			}
+		})
 	}
 }
 

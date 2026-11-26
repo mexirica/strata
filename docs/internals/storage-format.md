@@ -2,12 +2,12 @@
 
 Persisted bytes define Strata's storage format. Manifest v1 now stores ordered
 CID-and-size references instead of a CID-only list. This is a direct change to
-v1: pre-change development manifests are unsupported, with no migration,
-v2 reader, or compatibility mode.
+v1: development repositories containing pre-change CID-only manifests are
+unsupported, with no migration, v2 reader, or compatibility mode.
 
 ## Content Identifiers
 
-[`cid.CID`](../../internal/cid/cid.go) is exactly 34 bytes:
+[`cid.CID`](../../internal/content/cid/cid.go) is exactly 34 bytes:
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
@@ -22,7 +22,7 @@ current write configuration.
 
 ## Manifest Encoding
 
-[`manifeststore`](../../internal/manifeststore/manifest_store.go) uses one
+[`file.ManifestStore`](../../internal/file/manifest_store.go) uses one
 canonical, big-endian encoding:
 
 | Size | Field |
@@ -144,7 +144,7 @@ cursors contain the last CID returned and are exclusive on the next page.
 
 ## Write Semantics
 
-[`storage.BadgerStore`](../../internal/storage/badger.go) enables synchronous
+[`storage.Badger`](../../internal/storage/badger.go) enables synchronous
 writes. Each get, put, conditional put, delete, or page read owns a Badger
 transaction. `PutIfNotExists` retries optimistic conflicts; an existing key
 with different bytes returns a content-mismatch error instead of overwriting
@@ -183,6 +183,92 @@ hash algorithm are invocation preferences, while maximum file size, chunk
 count, and name length are write safety limits. Those limits reject new writes
 but are not applied while decoding existing manifests; structural validation
 of the encoded manifest remains mandatory.
+
+## Manifest Test Vectors
+
+The following blocks contain the complete manifest encodings in hexadecimal.
+Whitespace separates lines for readability and is not persisted.
+[`TestManifestStore_DocumentedVectors`](../../internal/file/manifest_store_test.go)
+checks every block against an independent golden fixture. For valid vectors it
+also checks the production encoder byte for byte, twice; malformed vectors are
+stored under their recomputed BLAKE3 CID so decoding, rather than a hash
+mismatch, must reject them with `file.ErrInvalidManifest`.
+
+The two-chunk fixture uses structurally valid BLAKE3 CIDs with synthetic digests
+(`01` or `02` followed by 31 zero bytes). It tests manifest encoding only and
+does not represent chunks whose contents can be retrieved from CAS. Reference
+offsets in that fixture are 42 and 84; the size fields start at 76 and 118.
+
+| Vector | Bytes | Expected result |
+| --- | ---: | --- |
+| `empty-file` | 39 | Version 1, name `a.txt`, size 0, no references |
+| `two-chunks` | 126 | Version 1, name `test.pdf`, size 1024, ordered sizes 256 and 768 |
+| `truncated-reference` | 125 | Reject: second reference is missing the last byte of its size |
+| `zero-chunk-size` | 126 | Reject: first reference declares zero bytes |
+| `chunk-size-overflow` | 126 | Reject: first reference declares $2^{63}$ bytes, above the signed 64-bit maximum |
+| `cumulative-size-overflow` | 126 | Reject: sizes $2^{63}-1$ and 1 overflow the allowed sum |
+| `reconstructed-size-mismatch` | 126 | Reject: sizes 256 and 769 sum to 1025, not the declared 1024 |
+
+### empty-file
+
+```text
+7374726174612d6d616e696665737400000100000005612e7478740000000000
+00000000000000
+```
+
+### two-chunks
+
+```text
+7374726174612d6d616e696665737400000100000008746573742e7064660000
+000000000400000000021e200100000000000000000000000000000000000000
+00000000000000000000000000000000000001001e2002000000000000000000
+000000000000000000000000000000000000000000000000000000000300
+```
+
+### truncated-reference
+
+```text
+7374726174612d6d616e696665737400000100000008746573742e7064660000
+000000000400000000021e200100000000000000000000000000000000000000
+00000000000000000000000000000000000001001e2002000000000000000000
+0000000000000000000000000000000000000000000000000000000003
+```
+
+### zero-chunk-size
+
+```text
+7374726174612d6d616e696665737400000100000008746573742e7064660000
+000000000400000000021e200100000000000000000000000000000000000000
+00000000000000000000000000000000000000001e2002000000000000000000
+000000000000000000000000000000000000000000000000000000000300
+```
+
+### chunk-size-overflow
+
+```text
+7374726174612d6d616e696665737400000100000008746573742e7064660000
+000000000400000000021e200100000000000000000000000000000000000000
+00000000000000000000000080000000000000001e2002000000000000000000
+000000000000000000000000000000000000000000000000000000000300
+```
+
+### cumulative-size-overflow
+
+```text
+7374726174612d6d616e696665737400000100000008746573742e7064667fff
+ffffffffffff000000021e200100000000000000000000000000000000000000
+0000000000000000000000007fffffffffffffff1e2002000000000000000000
+000000000000000000000000000000000000000000000000000000000001
+```
+
+### reconstructed-size-mismatch
+
+```text
+7374726174612d6d616e696665737400000100000008746573742e7064660000
+000000000400000000021e200100000000000000000000000000000000000000
+00000000000000000000000000000000000001001e2002000000000000000000
+000000000000000000000000000000000000000000000000000000000301
+```
 
 ## Format Change Checklist
 
